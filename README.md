@@ -64,7 +64,9 @@ Auto-detected from system environment (`PI_LOCALE` > `LC_ALL` > `LANG`). Session
 ```
 session_start → check if already named
         ↓
-agent_end (first turn) → extract user + assistant messages
+agent_end (first turn) → extract first user message
+        ↓
+(optional) include assistant reply if available
         ↓
 Read ~/.pi/agent/pi-autoname.json (auto-created if missing)
         ↓
@@ -73,7 +75,7 @@ enabled? → call LLM (session model or configured model)
 disabled / API failed → fallback to text slice(.slice(0, 60))
 ```
 
-The extension uses `@earendil-works/pi-ai`'s `complete()` — the same LLM interface used by `pi-compaction-i18n`. No subagent, no fork context, no extra process.
+The extension uses `@earendil-works/pi-ai`'s `complete()` — the same LLM interface used by `pi-compaction-i18n`. It can name a session from the very first user turn; assistant output is optional context, not a hard requirement. No subagent, no fork context, no extra process.
 
 ## 🔗 Related
 

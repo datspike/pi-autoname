@@ -96,7 +96,7 @@ const SYSTEM_PROMPT =
 
 async function generateAIName(
   userText: string,
-  assistantText: string,
+  assistantText: string | undefined,
   model: any,
   ctx: any,
 ): Promise<string | undefined> {
@@ -110,7 +110,7 @@ async function generateAIName(
     ? "한국어로 출력"
     : "Output in English";
 
-  const prompt = [
+  const promptParts = [
     `${langHint}.`,
     "",
     "Based on this conversation start, generate a concise session name (5-15 characters).",
@@ -120,11 +120,18 @@ async function generateAIName(
     `<user>`,
     userText.slice(0, 500),
     `</user>`,
-    "",
-    `<assistant>`,
-    assistantText.slice(0, 500),
-    `</assistant>`,
-  ].join("\n");
+  ];
+
+  if (assistantText?.trim()) {
+    promptParts.push(
+      "",
+      `<assistant>`,
+      assistantText.slice(0, 500),
+      `</assistant>`,
+    );
+  }
+
+  const prompt = promptParts.join("\n");
 
   const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
   if (!auth.ok || !auth.apiKey) return undefined;
@@ -186,21 +193,19 @@ export default function extension(pi: ExtensionAPI) {
 
       if (model) {
         const asstText = extractAssistantText(event);
-        if (asstText) {
-          try {
-            const aiName = await generateAIName(userText, asstText, model, ctx);
-            if (aiName?.trim()) {
-              pi.setSessionName(aiName.trim());
-              named = true;
-              return;
-            }
-          } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            ctx.ui.notify(
-              `pi-autoname: AI naming failed, using fallback (${msg})`,
-              "warning",
-            );
+        try {
+          const aiName = await generateAIName(userText, asstText, model, ctx);
+          if (aiName?.trim()) {
+            pi.setSessionName(aiName.trim());
+            named = true;
+            return;
           }
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          ctx.ui.notify(
+            `pi-autoname: AI naming failed, using fallback (${msg})`,
+            "warning",
+          );
         }
       }
     }
