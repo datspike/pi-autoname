@@ -1,8 +1,7 @@
 /**
- * dflow Auto Session Name Extension
+ * pi-autoname — AI-powered session naming for Pi
  *
- * AI-powered session naming via LLM semantic generation.
- * Reads config from ~/.pi/agent/dflow/dconfig.json.
+ * Reads config from ~/.pi/pi-autoname.json.
  * Falls back to simple text slice if config missing or API fails.
  *
  * Replaces the original auto-session-name.ts (fayimora's 30-line slice version).
@@ -16,31 +15,26 @@ import { homedir } from "os";
 
 // ── Types ───────────────────────────────────────────────
 
-interface SessionNameConfig {
+interface AutonameConfig {
   enabled?: boolean;
   model?: string; // e.g. "minimax-cn/MiniMax-M2.7"
 }
 
-interface DflowConfig {
-  sessionName?: SessionNameConfig;
-}
-
 // ── Config loading ──────────────────────────────────────
 
-const DCONFIG_PATH = join(homedir(), ".pi", "agent", "dflow", "dconfig.json");
+const CONFIG_PATH = join(homedir(), ".pi", "pi-autoname.json");
 
-function loadConfig(): DflowConfig {
+function loadConfig(): AutonameConfig {
   try {
-    if (!existsSync(DCONFIG_PATH)) return {};
-    const raw = readFileSync(DCONFIG_PATH, "utf-8");
-    return JSON.parse(raw) as DflowConfig;
+    if (!existsSync(CONFIG_PATH)) return {};
+    const raw = readFileSync(CONFIG_PATH, "utf-8");
+    return JSON.parse(raw) as AutonameConfig;
   } catch {
     return {};
   }
 }
 
 function resolveModelFromString(modelStr: string) {
-  // modelStr format: "provider/modelId" e.g. "minimax-cn/MiniMax-M2.7"
   const slashIndex = modelStr.indexOf("/");
   if (slashIndex === -1) return null;
   const provider = modelStr.slice(0, slashIndex);
@@ -97,7 +91,6 @@ async function generateAIName(
   model: any,
   ctx: any,
 ): Promise<string | undefined> {
-  // Detect locale for language hint (same logic as compaction-i18n)
   const locale =
     process.env.PI_LOCALE || process.env.LC_ALL || process.env.LANG || "";
   const langHint = locale.startsWith("zh")
@@ -142,7 +135,7 @@ async function generateAIName(
     {
       apiKey: auth.apiKey,
       headers: auth.headers,
-      maxTokens: 64, // Very short output needed
+      maxTokens: 64,
     },
   );
 
@@ -152,7 +145,6 @@ async function generateAIName(
     .join("")
     .trim();
 
-  // Clean up common LLM artifacts
   return text?.replace(/^["'`""''`]|["'`""''`]$/g, "").trim() || undefined;
 }
 
@@ -161,7 +153,7 @@ async function generateAIName(
 export default function extension(pi: ExtensionAPI) {
   let named = false;
   const config = loadConfig();
-  const enabled = config.sessionName?.enabled !== false; // default true
+  const enabled = config.enabled !== false; // default true
 
   pi.on("session_start", async () => {
     named = !!pi.getSessionName();
@@ -173,13 +165,11 @@ export default function extension(pi: ExtensionAPI) {
     const userText = extractUserText(event);
     if (!userText) return;
 
-    // Try AI generation if enabled and configured
-    if (enabled && config.sessionName?.model) {
-      const modelObj = resolveModelFromString(config.sessionName.model);
+    if (enabled && config.model) {
+      const modelObj = resolveModelFromString(config.model);
       if (modelObj) {
         const asstText = extractAssistantText(event);
         if (asstText) {
-          // Only attempt AI naming when we have both user + assistant messages
           try {
             const aiName = await generateAIName(userText, asstText, modelObj, ctx);
             if (aiName?.trim()) {
@@ -188,10 +178,9 @@ export default function extension(pi: ExtensionAPI) {
               return;
             }
           } catch (error) {
-            // Silent fallback — don't break the session over a naming error
             const msg = error instanceof Error ? error.message : String(error);
             ctx.ui.notify(
-              `dflow session-name: AI naming failed, using fallback (${msg})`,
+              `pi-autoname: AI naming failed, using fallback (${msg})`,
               "warning",
             );
           }
