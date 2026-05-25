@@ -22,7 +22,7 @@ interface AutonameConfig {
 
 // ── Config loading ──────────────────────────────────────
 
-const CONFIG_PATH = join(homedir(), ".pi", "pi-autoname.json");
+const CONFIG_PATH = join(homedir(), ".pi", "agent", "pi-autoname.json");
 
 function loadConfig(): AutonameConfig {
   try {

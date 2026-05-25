@@ -25,7 +25,7 @@ pi install /absolute/path/to/pi-autoname
 
 ## ⚙️ Configuration
 
-Create `~/.pi/pi-autoname.json`:
+Create `~/.pi/agent/pi-autoname.json`:
 
 ```json
 {
@@ -63,7 +63,7 @@ session_start → check if already named
         ↓
 agent_end (first turn) → extract user + assistant messages
         ↓
-Read ~/.pi/pi-autoname.json
+Read ~/.pi/agent/pi-autoname.json
         ↓
 Configured? → call LLM (cheap model) → setSessionName(AI name)
 Not configured? → fallback to text slice(.slice(0, 60))
