@@ -2,37 +2,29 @@
  * pi-autoname — AI-powered session naming for Pi
  *
  * Reads config from ~/.pi/agent/pi-autoname.json.
- * Falls back to simple text slice if config missing or API fails.
- *
- * Replaces the original auto-session-name.ts (fayimora's 30-line slice version).
+ * Automatically names the session once after the first complete dialogue
+ * (first user + first assistant reply), and provides /autoname for manual renaming.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { complete } from "@earendil-works/pi-ai";
-import { getModel } from "@earendil-works/pi-ai";
+import { complete, getModel } from "@earendil-works/pi-ai";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 
-// ── Types ───────────────────────────────────────────────
-
 interface AutonameConfig {
   enabled?: boolean;
-  model?: string; // e.g. "minimax-cn/MiniMax-M2.7", empty = use session model
+  model?: string; // empty = use session model
 }
 
-// ── Config loading (auto-create if missing) ─────────────
-
 const CONFIG_PATH = join(homedir(), ".pi", "agent", "pi-autoname.json");
-
 const DEFAULT_CONFIG: AutonameConfig = {
   enabled: true,
-  model: "", // empty = use current session model (ctx.model)
+  model: "",
 };
 
 function loadConfig(): AutonameConfig {
   try {
     if (!existsSync(CONFIG_PATH)) {
-      // Auto-generate default config on first load
       writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2), "utf-8");
       return DEFAULT_CONFIG;
     }
@@ -51,87 +43,80 @@ function resolveModelFromString(modelStr: string) {
   return getModel(provider, modelId);
 }
 
-// ── Message extraction ───────────────────────────────────
-
-function extractUserText(event: any): string | undefined {
-  const userMsg = event.messages?.find((m: any) => m.role === "user");
-  if (!userMsg) return undefined;
-
-  const content = userMsg.content;
+function blockText(content: any): string {
   if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .filter((b: any) => b.type === "text")
-      .map((b: any) => (b as { text: string }).text)
-      .join(" ");
-  }
-  return undefined;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((b: any) => b.type === "text")
+    .map((b: any) => b.text)
+    .join(" ")
+    .trim();
 }
-
-function extractAssistantText(event: any): string | undefined {
-  const asstMsg = event.messages?.find((m: any) => m.role === "assistant");
-  if (!asstMsg) return undefined;
-
-  const content = asstMsg.content;
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .filter((b: any) => b.type === "text")
-      .map((b: any) => (b as { text: string }).text)
-      .join(" ");
-  }
-  return undefined;
-}
-
-// ── Fallback: original slice behavior ────────────────────
 
 function fallbackName(text: string): string {
   return text.slice(0, 60).replace(/\n/g, " ").trim();
 }
 
-// ── LLM-powered name generation ──────────────────────────
+function getFirstDialogue(branch: any[]) {
+  let firstUser: string | undefined;
+  let firstAssistant: string | undefined;
+
+  for (const entry of branch) {
+    if (entry?.type !== "message" || !entry.message) continue;
+    const role = entry.message.role;
+    const text = blockText(entry.message.content);
+    if (!text) continue;
+    if (!firstUser && role === "user") firstUser = text;
+    if (firstUser && !firstAssistant && role === "assistant") {
+      firstAssistant = text;
+      break;
+    }
+  }
+
+  return { firstUser, firstAssistant };
+}
+
+function getRecentDialogue(branch: any[], maxMessages = 6) {
+  const items: Array<{ role: string; text: string }> = [];
+  for (const entry of branch) {
+    if (entry?.type !== "message" || !entry.message) continue;
+    const role = entry.message.role;
+    if (role !== "user" && role !== "assistant") continue;
+    const text = blockText(entry.message.content);
+    if (!text) continue;
+    items.push({ role, text });
+  }
+  return items.slice(-maxMessages);
+}
 
 const SYSTEM_PROMPT =
-  "You are a session namer for an AI coding assistant. Generate a concise, meaningful session name based on the conversation start.";
+  "You are a session namer for an AI coding assistant. Generate a concise, meaningful session name based on the conversation context.";
 
 async function generateAIName(
-  userText: string,
-  assistantText: string | undefined,
+  parts: Array<{ role: string; text: string }>,
   model: any,
   ctx: any,
 ): Promise<string | undefined> {
-  const locale =
-    process.env.PI_LOCALE || process.env.LC_ALL || process.env.LANG || "";
+  const locale = process.env.PI_LOCALE || process.env.LC_ALL || process.env.LANG || "";
   const langHint = locale.startsWith("zh")
     ? "用中文（简体）输出名称"
     : locale.startsWith("ja")
-    ? "日本語で出力"
-    : locale.startsWith("ko")
-    ? "한국어로 출력"
-    : "Output in English";
+      ? "日本語で出力"
+      : locale.startsWith("ko")
+        ? "한국어로 출력"
+        : "Output in English";
 
   const promptParts = [
     `${langHint}.`,
     "",
-    "Based on this conversation start, generate a concise session name (5-15 characters).",
-    "Describe what project and task this session is working on.",
+    "Generate a concise session name (5-15 characters/words) for this AI coding conversation.",
+    "Reflect the real project/task being worked on, not the literal first sentence.",
     "Output ONLY the name string, nothing else. No punctuation, no quotes, no explanation.",
-    "",
-    `<user>`,
-    userText.slice(0, 500),
-    `</user>`,
   ];
 
-  if (assistantText?.trim()) {
-    promptParts.push(
-      "",
-      `<assistant>`,
-      assistantText.slice(0, 500),
-      `</assistant>`,
-    );
+  for (const part of parts) {
+    promptParts.push("", `<${part.role}>`, part.text.slice(0, 700), `</${part.role}>`);
   }
-
-  const prompt = promptParts.join("\n");
 
   const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
   if (!auth.ok || !auth.apiKey) return undefined;
@@ -143,7 +128,7 @@ async function generateAIName(
       messages: [
         {
           role: "user",
-          content: [{ type: "text", text: prompt }],
+          content: [{ type: "text", text: promptParts.join("\n") }],
           timestamp: Date.now(),
         },
       ],
@@ -161,60 +146,83 @@ async function generateAIName(
     .join("")
     .trim();
 
-  return text?.replace(/^["'`""''`]|["'`""''`]$/g, "").trim() || undefined;
+  return text?.replace(/^["'`]+|["'`]+$/g, "").trim() || undefined;
 }
 
-// ── Extension entry point ────────────────────────────────
+async function maybeAutoname(pi: ExtensionAPI, ctx: any, mode: "first-dialogue" | "manual") {
+  const config = loadConfig();
+  if (config.enabled === false) return false;
+
+  let model = ctx.model;
+  if (config.model) {
+    const resolved = resolveModelFromString(config.model);
+    if (resolved) model = resolved;
+  }
+  if (!model) return false;
+
+  const branch = ctx.sessionManager.getBranch();
+  let parts: Array<{ role: string; text: string }> = [];
+
+  if (mode === "first-dialogue") {
+    const { firstUser, firstAssistant } = getFirstDialogue(branch);
+    if (!firstUser || !firstAssistant) return false;
+    parts = [
+      { role: "user", text: firstUser },
+      { role: "assistant", text: firstAssistant },
+    ];
+  } else {
+    parts = getRecentDialogue(branch);
+    if (parts.length === 0) return false;
+  }
+
+  try {
+    const aiName = await generateAIName(parts, model, ctx);
+    if (aiName?.trim()) {
+      pi.setSessionName(aiName.trim());
+      return true;
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    ctx.ui.notify(`pi-autoname: AI naming failed (${msg})`, "warning");
+  }
+
+  if (mode === "first-dialogue") {
+    const userText = parts.find((p) => p.role === "user")?.text;
+    if (userText) {
+      pi.setSessionName(fallbackName(userText));
+      return true;
+    }
+  }
+
+  return false;
+}
 
 export default function extension(pi: ExtensionAPI) {
   let named = false;
-  const config = loadConfig();
-  const enabled = config.enabled !== false; // default true
+  loadConfig();
 
   pi.on("session_start", async () => {
     named = !!pi.getSessionName();
   });
 
-  pi.on("agent_end", async (event, ctx) => {
+  pi.on("agent_end", async (_event, ctx) => {
     if (named) return;
+    const ok = await maybeAutoname(pi, ctx, "first-dialogue");
+    if (ok) named = true;
+  });
 
-    const userText = extractUserText(event);
-    if (!userText) return;
-
-    // Try AI generation — always attempt when enabled
-    if (enabled) {
-      let model = ctx.model; // default: use session's active model
-
-      // Override with configured model if set
-      if (config.model) {
-        const resolved = resolveModelFromString(config.model);
-        if (resolved) model = resolved;
+  pi.registerCommand("autoname", {
+    description: "AI-generate a session name from the current conversation context",
+    handler: async (_args, ctx) => {
+      const ok = await maybeAutoname(pi, ctx, "manual");
+      const current = pi.getSessionName();
+      if (ok && current) {
+        ctx.ui.notify(`Session renamed: ${current}`, "info");
+      } else if (current) {
+        ctx.ui.notify(`Session unchanged: ${current}`, "info");
+      } else {
+        ctx.ui.notify("pi-autoname: could not generate a session name", "warning");
       }
-
-      if (model) {
-        const asstText = extractAssistantText(event);
-        try {
-          const aiName = await generateAIName(userText, asstText, model, ctx);
-          if (aiName?.trim()) {
-            pi.setSessionName(aiName.trim());
-            named = true;
-            return;
-          }
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error);
-          ctx.ui.notify(
-            `pi-autoname: AI naming failed, using fallback (${msg})`,
-            "warning",
-          );
-        }
-      }
-    }
-
-    // Fallback: original slice behavior
-    const name = fallbackName(userText);
-    if (name) {
-      pi.setSessionName(name);
-      named = true;
-    }
+    },
   });
 }
