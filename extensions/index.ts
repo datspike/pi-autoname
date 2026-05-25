@@ -1,7 +1,7 @@
 /**
  * pi-autoname — AI-powered session naming for Pi
  *
- * Reads config from ~/.pi/pi-autoname.json.
+ * Reads config from ~/.pi/agent/pi-autoname.json.
  * Falls back to simple text slice if config missing or API fails.
  *
  * Replaces the original auto-session-name.ts (fayimora's 30-line slice version).
@@ -9,7 +9,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { complete } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai";
-import { readFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 
@@ -17,20 +17,29 @@ import { homedir } from "os";
 
 interface AutonameConfig {
   enabled?: boolean;
-  model?: string; // e.g. "minimax-cn/MiniMax-M2.7"
+  model?: string; // e.g. "minimax-cn/MiniMax-M2.7", empty = use session model
 }
 
-// ── Config loading ──────────────────────────────────────
+// ── Config loading (auto-create if missing) ─────────────
 
 const CONFIG_PATH = join(homedir(), ".pi", "agent", "pi-autoname.json");
 
+const DEFAULT_CONFIG: AutonameConfig = {
+  enabled: true,
+  model: "", // empty = use current session model (ctx.model)
+};
+
 function loadConfig(): AutonameConfig {
   try {
-    if (!existsSync(CONFIG_PATH)) return {};
+    if (!existsSync(CONFIG_PATH)) {
+      // Auto-generate default config on first load
+      writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2), "utf-8");
+      return DEFAULT_CONFIG;
+    }
     const raw = readFileSync(CONFIG_PATH, "utf-8");
     return JSON.parse(raw) as AutonameConfig;
   } catch {
-    return {};
+    return DEFAULT_CONFIG;
   }
 }
 
@@ -165,13 +174,21 @@ export default function extension(pi: ExtensionAPI) {
     const userText = extractUserText(event);
     if (!userText) return;
 
-    if (enabled && config.model) {
-      const modelObj = resolveModelFromString(config.model);
-      if (modelObj) {
+    // Try AI generation — always attempt when enabled
+    if (enabled) {
+      let model = ctx.model; // default: use session's active model
+
+      // Override with configured model if set
+      if (config.model) {
+        const resolved = resolveModelFromString(config.model);
+        if (resolved) model = resolved;
+      }
+
+      if (model) {
         const asstText = extractAssistantText(event);
         if (asstText) {
           try {
-            const aiName = await generateAIName(userText, asstText, modelObj, ctx);
+            const aiName = await generateAIName(userText, asstText, model, ctx);
             if (aiName?.trim()) {
               pi.setSessionName(aiName.trim());
               named = true;

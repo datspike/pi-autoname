@@ -17,15 +17,27 @@
 pi install npm:pi-autoname
 ```
 
-Or install from a local path:
-
-```bash
-pi install /absolute/path/to/pi-autoname
-```
+**Works out of the box.** No configuration needed — uses your current session's model by default.
 
 ## ⚙️ Configuration
 
-Create `~/.pi/agent/pi-autoname.json`:
+Config file is **auto-generated** on first use at `~/.pi/agent/pi-autoname.json`:
+
+```json
+{
+  "enabled": true,
+  "model": ""
+}
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | boolean | `true` | Set to `false` to disable AI naming (falls back to text slice) |
+| `model` | string | _(session model)_ | Override model (`provider/modelId`). Empty = use current session's active model |
+
+### Why override the model?
+
+By default, autoname uses whatever model your session is running on — this means **zero config, works immediately**. But if you want a cheaper/faster model specifically for naming (it's a <1s task), you can set one:
 
 ```json
 {
@@ -34,16 +46,7 @@ Create `~/.pi/agent/pi-autoname.json`:
 }
 ```
 
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `enabled` | boolean | `true` | Set to `false` to disable AI naming |
-| `model` | string | _(fallback to slice)_ | Model ID for name generation (`provider/modelId`). Uses a cheap model by default. |
-
-### Fallback behavior
-
-- **No config file** → falls back to original text slice (`.slice(0, 60)`)
-- **API error** → silently falls back to slice, shows warning notification
-- **No assistant message yet** → waits until first round completes, then generates
+> **Tip**: Naming only needs ~64 tokens of output. A cheap model is perfectly fine.
 
 ## 🌍 Locale support
 
@@ -63,10 +66,11 @@ session_start → check if already named
         ↓
 agent_end (first turn) → extract user + assistant messages
         ↓
-Read ~/.pi/agent/pi-autoname.json
+Read ~/.pi/agent/pi-autoname.json (auto-created if missing)
         ↓
-Configured? → call LLM (cheap model) → setSessionName(AI name)
-Not configured? → fallback to text slice(.slice(0, 60))
+enabled? → call LLM (session model or configured model)
+              → setSessionName(AI name)
+disabled / API failed → fallback to text slice(.slice(0, 60))
 ```
 
 The extension uses `@earendil-works/pi-ai`'s `complete()` — the same LLM interface used by `pi-compaction-i18n`. No subagent, no fork context, no extra process.
@@ -74,7 +78,6 @@ The extension uses `@earendil-works/pi-ai`'s `complete()` — the same LLM inter
 ## 🔗 Related
 
 - [pi-compaction-i18n](https://github.com/ssdiwu/pi-compaction-i18n) — Localized compaction summaries (sibling project)
-- [pi-dflow](https://github.com/ssdiwu/pi-dflow) — AI coding workflow framework (will absorb this extension)
 
 ## License
 
