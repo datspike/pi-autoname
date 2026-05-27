@@ -23,6 +23,7 @@ interface AutonameConfig {
   enabled?: boolean;
   model?: string; // primary model (empty = use session model)
   fallbackModels?: string[]; // additional models to try before session model
+  cooldownMinutes?: number; // minutes between periodic renames (default: 10)
   debug?: boolean; // enable debug logging
 }
 
@@ -437,6 +438,13 @@ export default function extension(pi: ExtensionAPI) {
    */
   let namedState: false | "ai" | "fallback" = false;
 
+  /** Cooldown for periodic renaming (ms) */
+  const config = loadConfig();
+  const RENAME_COOLDOWN_MS = (config.cooldownMinutes ?? 10) * 60 * 1000;
+  
+  /** Last rename timestamp */
+  let lastRenameTime = 0;
+
   loadConfig();
 
   pi.on("session_start", async () => {
@@ -449,18 +457,44 @@ export default function extension(pi: ExtensionAPI) {
     } else {
       namedState = false;
     }
+    // Reset cooldown on session start
+    lastRenameTime = Date.now();
   });
 
   pi.on("agent_end", async (_event, ctx) => {
-    // Always allow retry if previous name was low-quality fallback
-    if (namedState === "ai") return;
+    const now = Date.now();
+    const timeSinceLastRename = now - lastRenameTime;
+    
+    debugLog('agent_end, namedState:', namedState, 'timeSinceLastRename:', Math.round(timeSinceLastRename / 1000) + 's');
 
-    debugLog('agent_end event, namedState:', namedState);
+    // First dialogue: always try if not yet named
+    if (namedState === false || namedState === "fallback") {
+      const result = await maybeAutoname(pi, ctx, "first-dialogue");
+      debugLog('first-dialogue result:', result);
+      if (result.ok) {
+        namedState = result.source;
+        lastRenameTime = now;
+      }
+      return;
+    }
 
-    const result = await maybeAutoname(pi, ctx, "first-dialogue");
-    debugLog('maybeAutoname result:', result);
-    if (result.ok) {
-      namedState = result.source;
+    // Periodic renaming: only if cooldown has passed
+    if (timeSinceLastRename >= RENAME_COOLDOWN_MS) {
+      debugLog('cooldown passed, trying periodic rename');
+      const currentName = pi.getSessionName();
+      const result = await maybeAutoname(pi, ctx, "manual");
+      
+      if (result.ok) {
+        const newName = pi.getSessionName();
+        // Only update if name actually changed
+        if (newName && newName !== currentName) {
+          debugLog('name updated:', currentName, '->', newName);
+          lastRenameTime = now;
+        } else {
+          debugLog('name unchanged, resetting cooldown');
+          lastRenameTime = now; // Reset cooldown even if name unchanged
+        }
+      }
     }
   });
 
