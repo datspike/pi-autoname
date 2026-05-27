@@ -21,7 +21,8 @@ import { homedir } from "os";
 
 interface AutonameConfig {
   enabled?: boolean;
-  model?: string; // empty = use session model
+  model?: string; // primary model (empty = use session model)
+  fallbackModels?: string[]; // additional models to try before session model
   debug?: boolean; // enable debug logging
 }
 
@@ -46,8 +47,14 @@ function debugLog(...args: any[]) {
 /** A name this short was likely a failed AI response */
 const MIN_NAME_LENGTH = 3;
 
+/** Max length for a session name — anything longer is likely a raw sentence */
+const MAX_NAME_LENGTH = 30;
+
 /** Names matching this pattern are raw-slice fallbacks (bad) */
 const RAW_SLICE_RE = /^(?:我|你|他|她|它|请|帮|能|可|可以|能不能|请帮|感觉|突然|我想|我想知道|有没有|是不是|为什么|怎么|如何|What|Can|Could|Please|Help|I want|I need|Is there|Why|How)/;
+
+/** Sentence-ending punctuation — a real session name should not contain these */
+const SENTENCE_END_RE = /[。！？!?.…]+\s*$/;
 
 function loadConfig(): AutonameConfig {
   try {
@@ -116,6 +123,9 @@ function smartFallbackName(text: string): string {
   // Strip trailing particles
   s = s.replace(/(?:吗|呢|吧|啊|呀|哦|嘛|的|了|着|过)[\s,，.。]*$/, "").trim();
 
+  // Strip trailing sentence-ending punctuation
+  s = s.replace(/[。！？!?.…]+\s*$/, "").trim();
+
   return s || text.slice(0, 40).replace(/\n/g, " ").trim();
 }
 
@@ -124,8 +134,12 @@ function smartFallbackName(text: string): string {
  * (vs a raw-text fallback).
  */
 function isHighQualityName(name: string): boolean {
-  if (name.length < MIN_NAME_LENGTH || name.length > 50) return false;
+  if (name.length < MIN_NAME_LENGTH || name.length > MAX_NAME_LENGTH) return false;
   if (RAW_SLICE_RE.test(name)) return false;
+  // Reject sentence-like names (ending with punctuation)
+  if (SENTENCE_END_RE.test(name)) return false;
+  // Reject names with internal sentence punctuation (multiple clauses)
+  if ((name.match(/[，,。！？!?]/g) || []).length > 1) return false;
   // Should contain at least one CJK char OR be mixed alphanumeric (not pure noise)
   const hasContent = /[\u4e00-\u9fff]/.test(name) || /^[A-Za-z][A-Za-z0-9_\-\s]{2,30}$/.test(name);
   return hasContent;
@@ -185,6 +199,9 @@ async function generateAIName(
   model: any,
   ctx: any,
 ): Promise<string | undefined> {
+  const modelId = model?.provider + '/' + model?.id;
+  debugLog('generateAIName called with model:', modelId);
+  debugLog('dialogue parts count:', parts.length);
   const locale = process.env.PI_LOCALE || process.env.LC_ALL || process.env.LANG || "";
   const langHint = locale.startsWith("zh")
     ? "用中文（简体）输出名称"
@@ -200,6 +217,14 @@ async function generateAIName(
     "Generate a concise session name (5-15 characters/words) for this AI coding conversation.",
     "Reflect the real project/task being worked on, not the literal first sentence.",
     "Output ONLY the name string, nothing else. No punctuation, no quotes, no explanation.",
+    "",
+    "CRITICAL RULES:",
+    "- NEVER copy or repeat any part of the conversation verbatim.",
+    "- The name must be a short topic label, NOT a sentence or response.",
+    "- Do NOT end with punctuation (。！？.!?).",
+    "- Do NOT include commas or multiple clauses.",
+    "- Examples of GOOD names: API重构, 部署脚本调试, 数据库迁移, Session naming fix",
+    "- Examples of BAD names: 好的我来帮你做, Let me help you with that, 已经完成了配置",
   ];
 
   for (const part of parts) {
@@ -208,50 +233,89 @@ async function generateAIName(
 
   const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
   if (!auth.ok || !auth.apiKey) {
-    ctx.ui.notify(`pi-autoname: no API key for model`, "warning");
+    debugLog('no API key for model:', model.provider + '/' + model.id);
     return undefined;
   }
+  debugLog('API key found, calling complete');
 
   // Wrap with timeout to prevent hanging on slow/unresponsive models
-  const response = await Promise.race([
-    complete(
-      model,
-      {
-        systemPrompt: SYSTEM_PROMPT,
-        messages: [
-          {
-            role: "user",
-            content: [{ type: "text", text: promptParts.join("\n") }],
-            timestamp: Date.now(),
-          },
-        ],
-      },
-      {
-        apiKey: auth.apiKey,
-        headers: auth.headers,
-        maxTokens: 64,
-      },
-    ),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("AI naming timed out")), AI_TIMEOUT_MS)
-    ),
-  ]);
+  let response: any;
+  try {
+    response = await Promise.race([
+      complete(
+        model,
+        {
+          systemPrompt: SYSTEM_PROMPT,
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: promptParts.join("\n") }],
+              timestamp: Date.now(),
+            },
+          ],
+        },
+        {
+          apiKey: auth.apiKey,
+          headers: auth.headers,
+          maxTokens: 256,
+        },
+      ),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("AI naming timed out")), AI_TIMEOUT_MS)
+      ),
+    ]);
+    debugLog('complete returned, stopReason:', response.stopReason);
+    if (response.errorMessage) {
+      debugLog('API error:', response.errorMessage);
+    }
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    debugLog('complete threw error:', errMsg);
+    throw err; // Re-throw to be caught by caller
+  }
 
-  const text = response.content
+  // Extract text from response - try text first, then thinking
+  let text = response.content
     ?.filter((c: any) => c.type === "text")
     .map((c: any) => c.text)
     .join("")
     .trim();
+  
+  // If no text content, try thinking content
+  if (!text) {
+    text = response.content
+      ?.filter((c: any) => c.type === "thinking")
+      .map((c: any) => c.thinking)
+      .join("")
+      .trim();
+    if (text) {
+      debugLog('using thinking content as fallback');
+    }
+  }
+  
+  debugLog('response text:', text?.slice(0, 100));
 
   // Validate and clean
   const cleaned = text?.replace(/^["'`\u201c\u201d\u3001]+|["'`\u201c\u201d\u3001]+$/g, "")
     .replace(/[^\w\u4e00-\u9fff\s\-_/]/g, "")
     .trim();
 
-  if (cleaned && cleaned.length >= MIN_NAME_LENGTH && cleaned.length <= 60) {
-    return cleaned;
+  if (!cleaned || cleaned.length < MIN_NAME_LENGTH || cleaned.length > MAX_NAME_LENGTH) {
+    debugLog('AI name rejected: length issue', cleaned?.length, cleaned);
+    return undefined;
   }
-  return undefined; // AI output was unusable
+
+  // Reject sentence-like names
+  if (SENTENCE_END_RE.test(cleaned)) {
+    debugLog('AI name rejected: sentence-like (ends with punctuation)', cleaned);
+    return undefined;
+  }
+  if ((cleaned.match(/[，,。！？!?]/g) || []).length > 1) {
+    debugLog('AI name rejected: multiple punctuation marks', cleaned);
+    return undefined;
+  }
+
+  return cleaned;
 }
 
 async function maybeAutoname(pi: ExtensionAPI, ctx: any, mode: "first-dialogue" | "manual"): Promise<{ ok: boolean; source: "ai" | "fallback" | false }> {
@@ -262,25 +326,48 @@ async function maybeAutoname(pi: ExtensionAPI, ctx: any, mode: "first-dialogue" 
     return { ok: false, source: false };
   }
 
-  // --- Model resolution with warning ---
-  let model = ctx.model;
-  debugLog('session model:', model?.id);
-  if (config.model) {
-    debugLog('configured model:', config.model);
-    const resolved = resolveModelFromString(config.model);
+  // --- Build model fallback chain ---
+  const models: any[] = [];
+  const addedModels = new Set<string>();
+  
+  function addModel(modelStr: string, source: string) {
+    const resolved = resolveModelFromString(modelStr);
     if (resolved) {
-      model = resolved;
-      debugLog('resolved model:', model?.id);
+      const key = resolved.provider + '/' + resolved.id;
+      if (!addedModels.has(key)) {
+        models.push(resolved);
+        addedModels.add(key);
+        debugLog(`added ${source} model:`, key);
+      }
     } else {
-      debugLog('model not found, using session model');
-      ctx.ui.notify(
-        `pi-autoname: configured model "${config.model}" not found, using session model`,
-        "warning",
-      );
+      debugLog(`${source} model not found:`, modelStr);
     }
   }
-  if (!model) {
-    debugLog('no model available');
+  
+  // 1. Primary configured model
+  if (config.model) {
+    addModel(config.model, 'primary');
+  }
+  
+  // 2. Additional fallback models
+  if (config.fallbackModels && Array.isArray(config.fallbackModels)) {
+    for (const fb of config.fallbackModels) {
+      addModel(fb, 'fallback');
+    }
+  }
+  
+  // 3. Session model (as final fallback)
+  if (ctx.model) {
+    const key = ctx.model.provider + '/' + ctx.model.id;
+    if (!addedModels.has(key)) {
+      models.push(ctx.model);
+      addedModels.add(key);
+      debugLog('added session model:', key);
+    }
+  }
+  
+  if (models.length === 0) {
+    debugLog('no models available');
     return { ok: false, source: false };
   }
 
@@ -300,30 +387,41 @@ async function maybeAutoname(pi: ExtensionAPI, ctx: any, mode: "first-dialogue" 
     if (parts.length === 0) return { ok: false, source: false };
   }
 
-  // --- Try AI naming ---
-  try {
-    debugLog('calling AI naming...');
-    const aiName = await generateAIName(parts, model, ctx);
-    debugLog('AI response:', aiName);
-    if (aiName?.trim()) {
-      debugLog('setting session name to:', aiName.trim());
-      pi.setSessionName(aiName.trim());
-      return { ok: true, source: "ai" };
+  // --- Try AI naming with model fallback chain ---
+  for (let i = 0; i < models.length; i++) {
+    const model = models[i];
+    debugLog(`trying model ${i + 1}/${models.length}:`, model.provider + '/' + model.id);
+    
+    try {
+      const aiName = await generateAIName(parts, model, ctx);
+      debugLog('AI response:', aiName);
+      if (aiName?.trim()) {
+        debugLog('setting session name to:', aiName.trim());
+        pi.setSessionName(aiName.trim());
+        return { ok: true, source: "ai" };
+      }
+      debugLog('model returned empty, trying next...');
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      debugLog('model failed:', msg);
+      // Continue to next model
     }
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    debugLog('AI naming failed:', msg);
-    ctx.ui.notify(`pi-autoname: AI naming failed (${msg.slice(0, 120)})`, "warning");
   }
 
+  debugLog('all models failed, using smart fallback');
+
   // --- Smart fallback ---
-  if (mode === "first-dialogue") {
-    const userText = parts.find((p) => p.role === "user")?.text;
-    if (userText) {
-      const fb = smartFallbackName(userText);
+  const userText = parts.find((p) => p.role === "user")?.text;
+  if (userText) {
+    const fb = smartFallbackName(userText);
+    debugLog('fallback name generated:', fb);
+    // Only use fallback if it passes quality check
+    if (isHighQualityName(fb)) {
       debugLog('using fallback name:', fb);
       pi.setSessionName(fb);
       return { ok: true, source: "fallback" };
+    } else {
+      debugLog('fallback name rejected by quality check:', fb);
     }
   }
 
@@ -372,12 +470,14 @@ export default function extension(pi: ExtensionAPI) {
       const result = await maybeAutoname(pi, ctx, "manual");
       const current = pi.getSessionName();
       if (result.ok && current) {
-        ctx.ui.notify(`Session renamed: ${current} (${result.source})`, "info");
+        if (result.source === "ai") {
+          ctx.ui.notify(`Session renamed: ${current}`, "info");
+        } else {
+          ctx.ui.notify(`Session renamed (fallback): ${current}`, "warning");
+        }
         namedState = result.source;
-      } else if (current) {
-        ctx.ui.notify(`Session unchanged: ${current}`, "info");
       } else {
-        ctx.ui.notify("pi-autoname: could not generate a session name", "warning");
+        ctx.ui.notify("pi-autoname: could not generate a name", "warning");
       }
     },
   });
