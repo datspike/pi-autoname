@@ -2,15 +2,17 @@
 
 > **Give your Pi sessions meaningful names — powered by AI.**
 
-`pi-autoname` names your session **once automatically after the first complete dialogue** (first user message + first assistant reply), and also provides **`/autoname`** for manual re-naming later.
+`pi-autoname` automatically names your session after the first dialogue, **periodically renames as the conversation evolves**, and provides **`/autoname`** for manual re-naming.
 
 ## ✨ What it does
 
 | Scenario | Behavior |
 |---|---|
 | First dialogue completes | Automatically generates a semantic session name |
-| Session topic drifts later | Run `/autoname` to refresh the name |
-| AI naming fails | Falls back to the first user message slice |
+| Conversation continues | Silently re-names every 10 minutes (configurable) |
+| Session topic drifts | Name updates to reflect the new focus |
+| Run `/autoname` | Manually regenerate from recent context |
+| AI naming fails | Falls back to smart text extraction |
 
 ## 🚀 Install
 
@@ -27,23 +29,35 @@ Config file is **auto-generated** on first use at `~/.pi/agent/pi-autoname.json`
 ```json
 {
   "enabled": true,
-  "model": ""
+  "model": "",
+  "fallbackModels": [],
+  "cooldownMinutes": 10,
+  "debug": false
 }
 ```
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | boolean | `true` | Set to `false` to disable AI naming |
-| `model` | string | _(session model)_ | Override model (`provider/modelId`). Empty = use current session's active model |
+| `model` | string | _(session model)_ | Primary model (`provider/modelId`). Empty = use session model |
+| `fallbackModels` | string[] | `[]` | Additional models to try if primary fails |
+| `cooldownMinutes` | number | `10` | Minutes between periodic re-names |
+| `debug` | boolean | `false` | Enable debug logging |
 
-Example for a cheaper dedicated naming model:
+### Example: Model fallback chain
 
 ```json
 {
   "enabled": true,
-  "model": "minimax-cn/MiniMax-M2.7"
+  "model": "minimax-cn/MiniMax-M2.7",
+  "fallbackModels": [
+    "xiaomi-token-plan-cn/mimo-v2-omni"
+  ],
+  "cooldownMinutes": 10
 }
 ```
+
+This tries models in order: `MiniMax-M2.7` → `mimo-v2-omni` → session model.
 
 ## 🏗️ How it works
 
@@ -54,11 +68,34 @@ first user message
         ↓
 first assistant reply finishes
         ↓
-read ~/.pi/agent/pi-autoname.json (auto-created if missing)
+AI generates semantic session name
         ↓
-use configured model or current session model
+setSessionName(name)
+```
+
+### Periodic re-naming
+
+```
+agent_end event (new message processed)
         ↓
-setSessionName(AI name)
+cooldown passed? (10 min default)
+        ↓
+AI generates new name from recent context
+        ↓
+name changed? → silently update
+name same? → skip
+```
+
+### Model fallback chain
+
+```
+primary model (from config)
+        ↓ failed?
+fallback models (from config)
+        ↓ failed?
+session model (automatic)
+        ↓ failed?
+smart text extraction (no AI)
 ```
 
 ### Manual naming
@@ -67,7 +104,7 @@ setSessionName(AI name)
 /autoname
 ```
 
-This regenerates the session name from the **recent conversation context**, useful when the session has drifted or narrowed to a more specific task.
+Regenerates the session name from recent conversation context. Useful when you want to force an immediate rename.
 
 ### Built-in `/name` still works
 
