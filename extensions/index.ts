@@ -340,9 +340,10 @@ export default function extension(pi: ExtensionAPI) {
   });
 
   pi.on("agent_end", async (_event, ctx) => {
-    console.error('[pi-autoname] agent_end event, namedState:', namedState);
     // Always allow retry if previous name was low-quality fallback
     if (namedState === "ai") return;
+
+    console.error('[pi-autoname] agent_end event, namedState:', namedState);
 
     const result = await maybeAutoname(pi, ctx, "first-dialogue");
     console.error('[pi-autoname] maybeAutoname result:', result);
