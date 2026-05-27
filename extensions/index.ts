@@ -3,7 +3,15 @@
  *
  * Reads config from ~/.pi/agent/pi-autoname.json.
  * Automatically names the session once after the first complete dialogue
- * (first user + first assistant reply), and provides /autoname for manual renaming.
+ * (first user message + first assistant reply), and provides /autoname for manual renaming.
+ *
+ * Fixes v0.5.1→v0.5.2:
+ * - Model resolution failure now warns instead of silent fallback
+ * - Fallback name uses smart extraction instead of raw text slice
+ * - named flag allows retry when previous name was a low-quality fallback
+ * - AI output validated and cleaned
+ * - Compaction-aware dialogue extraction
+ * - Added timeout + structured error reporting
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { complete, getModel } from "@earendil-works/pi-ai";
@@ -21,6 +29,15 @@ const DEFAULT_CONFIG: AutonameConfig = {
   enabled: true,
   model: "",
 };
+
+/** Max time to wait for AI naming response (ms) */
+const AI_TIMEOUT_MS = 30_000;
+
+/** A name this short was likely a failed AI response */
+const MIN_NAME_LENGTH = 3;
+
+/** Names matching this pattern are raw-slice fallbacks (bad) */
+const RAW_SLICE_RE = /^(?:我|你|他|她|它|请|帮|能|可|可以|能不能|请帮|感觉|突然|我想|我想知道|有没有|是不是|为什么|怎么|如何|What|Can|Could|Please|Help|I want|I need|Is there|Why|How)/;
 
 function loadConfig(): AutonameConfig {
   try {
@@ -53,23 +70,79 @@ function blockText(content: any): string {
     .trim();
 }
 
-function fallbackName(text: string): string {
-  return text.slice(0, 60).replace(/\n/g, " ").trim();
+/**
+ * Smart fallback: extract key semantic content from user text
+ * instead of blindly slicing first 60 chars.
+ *
+ * Strategy:
+ * 1. Strip common conversational prefixes ("我感觉到", "Can you help me", etc.)
+ * 2. Find the first sentence-ending punctuation and truncate there
+ * 3. If still long, find last space/char boundary near 40 chars
+ * 4. Clean up trailing particles
+ */
+function smartFallbackName(text: string): string {
+  let s = text.slice(0, 200).replace(/\n/g, " ").trim();
+
+  // Strip conversational openers
+  s = s.replace(
+    /^(?:我(?:觉得|感觉|发现|想要|想知道|怀疑)?\s*|你(?:能|可以|帮)\s*(?:我\s*)?|请(?:你|帮我)?\s*|Can you\s*(?:please\s*)?|Could you\s*(?:please\s*)?|Please\s*(?:help me\s*)?|I\s*(?:think|feel|want|need|noticed)\s*(?:that\s*)?|Is it possible to\s*|I wonder if\s*|I\'m wondering about\s*)/i,
+    "",
+  ).trim();
+
+  // Truncate at first sentence boundary (.!?!。！？)
+  const sentenceEnd = s.match(/[.!?。！？]/);
+  if (sentenceEnd && sentenceEnd.index! < 60) {
+    s = s.slice(0, sentenceEnd.index! + 1);
+  } else if (s.length > 45) {
+    // Find last word boundary before 45
+    const cut = s.lastIndexOf(" ", 45);
+    s = cut > 10 ? s.slice(0, cut) : s.slice(0, 42);
+  }
+
+  // Strip trailing particles
+  s = s.replace(/(?:吗|呢|吧|啊|呀|哦|嘛|的|了|着|过)[\s,，.。]*$/, "").trim();
+
+  return s || text.slice(0, 40).replace(/\n/g, " ").trim();
 }
 
+/**
+ * Check if a name looks like a high-quality AI-generated name
+ * (vs a raw-text fallback).
+ */
+function isHighQualityName(name: string): boolean {
+  if (name.length < MIN_NAME_LENGTH || name.length > 50) return false;
+  if (RAW_SLICE_RE.test(name)) return false;
+  // Should contain at least one CJK char OR be mixed alphanumeric (not pure noise)
+  const hasContent = /[\u4e00-\u9fff]/.test(name) || /^[A-Za-z][A-Za-z0-9_\-\s]{2,30}$/.test(name);
+  return hasContent;
+}
+
+/**
+ * Extract dialogue from session branch, handling:
+ * - Standard message entries
+ * - Compaction entries (which contain summarized messages)
+ */
 function getFirstDialogue(branch: any[]) {
   let firstUser: string | undefined;
   let firstAssistant: string | undefined;
 
   for (const entry of branch) {
-    if (entry?.type !== "message" || !entry.message) continue;
-    const role = entry.message.role;
-    const text = blockText(entry.message.content);
-    if (!text) continue;
-    if (!firstUser && role === "user") firstUser = text;
-    if (firstUser && !firstAssistant && role === "assistant") {
-      firstAssistant = text;
-      break;
+    // Standard message entries
+    if (entry?.type === "message" && entry.message) {
+      const role = entry.message.role;
+      const text = blockText(entry.message.content);
+      if (!text) continue;
+      if (!firstUser && role === "user") firstUser = text;
+      if (firstUser && !firstAssistant && role === "assistant") {
+        firstAssistant = text;
+        break;
+      }
+    }
+
+    // Compaction entries contain summarized conversation
+    if (entry?.type === "compaction" && !firstUser) {
+      const summary = blockText(entry.summary ?? entry.content);
+      if (summary) firstUser = summary;
     }
   }
 
@@ -79,12 +152,13 @@ function getFirstDialogue(branch: any[]) {
 function getRecentDialogue(branch: any[], maxMessages = 6) {
   const items: Array<{ role: string; text: string }> = [];
   for (const entry of branch) {
-    if (entry?.type !== "message" || !entry.message) continue;
-    const role = entry.message.role;
-    if (role !== "user" && role !== "assistant") continue;
-    const text = blockText(entry.message.content);
-    if (!text) continue;
-    items.push({ role, text });
+    if (entry?.type === "message" && entry.message) {
+      const role = entry.message.role;
+      if (role !== "user" && role !== "assistant") continue;
+      const text = blockText(entry.message.content);
+      if (!text) continue;
+      items.push({ role, text });
+    }
   }
   return items.slice(-maxMessages);
 }
@@ -119,26 +193,35 @@ async function generateAIName(
   }
 
   const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-  if (!auth.ok || !auth.apiKey) return undefined;
+  if (!auth.ok || !auth.apiKey) {
+    ctx.ui.notify(`pi-autoname: no API key for model`, "warning");
+    return undefined;
+  }
 
-  const response = await complete(
-    model,
-    {
-      systemPrompt: SYSTEM_PROMPT,
-      messages: [
-        {
-          role: "user",
-          content: [{ type: "text", text: promptParts.join("\n") }],
-          timestamp: Date.now(),
-        },
-      ],
-    },
-    {
-      apiKey: auth.apiKey,
-      headers: auth.headers,
-      maxTokens: 64,
-    },
-  );
+  // Wrap with timeout to prevent hanging on slow/unresponsive models
+  const response = await Promise.race([
+    complete(
+      model,
+      {
+        systemPrompt: SYSTEM_PROMPT,
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: promptParts.join("\n") }],
+            timestamp: Date.now(),
+          },
+        ],
+      },
+      {
+        apiKey: auth.apiKey,
+        headers: auth.headers,
+        maxTokens: 64,
+      },
+    ),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("AI naming timed out")), AI_TIMEOUT_MS)
+    ),
+  ]);
 
   const text = response.content
     ?.filter((c: any) => c.type === "text")
@@ -146,78 +229,118 @@ async function generateAIName(
     .join("")
     .trim();
 
-  return text?.replace(/^["'`]+|["'`]+$/g, "").trim() || undefined;
+  // Validate and clean
+  const cleaned = text?.replace(/^["'`\u201c\u201d\u3001]+|["'`\u201c\u201d\u3001]+$/g, "")
+    .replace(/[^\w\u4e00-\u9fff\s\-_/]/g, "")
+    .trim();
+
+  if (cleaned && cleaned.length >= MIN_NAME_LENGTH && cleaned.length <= 60) {
+    return cleaned;
+  }
+  return undefined; // AI output was unusable
 }
 
-async function maybeAutoname(pi: ExtensionAPI, ctx: any, mode: "first-dialogue" | "manual") {
+async function maybeAutoname(pi: ExtensionAPI, ctx: any, mode: "first-dialogue" | "manual"): Promise<{ ok: boolean; source: "ai" | "fallback" | false }> {
   const config = loadConfig();
-  if (config.enabled === false) return false;
+  if (config.enabled === false) return { ok: false, source: false };
 
+  // --- Model resolution with warning ---
   let model = ctx.model;
   if (config.model) {
     const resolved = resolveModelFromString(config.model);
-    if (resolved) model = resolved;
+    if (resolved) {
+      model = resolved;
+    } else {
+      ctx.ui.notify(
+        `pi-autoname: configured model "${config.model}" not found, using session model`,
+        "warning",
+      );
+    }
   }
-  if (!model) return false;
+  if (!model) return { ok: false, source: false };
 
+  // --- Dialogue extraction ---
   const branch = ctx.sessionManager.getBranch();
   let parts: Array<{ role: string; text: string }> = [];
 
   if (mode === "first-dialogue") {
     const { firstUser, firstAssistant } = getFirstDialogue(branch);
-    if (!firstUser || !firstAssistant) return false;
+    if (!firstUser || !firstAssistant) return { ok: false, source: false };
     parts = [
       { role: "user", text: firstUser },
       { role: "assistant", text: firstAssistant },
     ];
   } else {
     parts = getRecentDialogue(branch);
-    if (parts.length === 0) return false;
+    if (parts.length === 0) return { ok: false, source: false };
   }
 
+  // --- Try AI naming ---
   try {
     const aiName = await generateAIName(parts, model, ctx);
     if (aiName?.trim()) {
       pi.setSessionName(aiName.trim());
-      return true;
+      return { ok: true, source: "ai" };
     }
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    ctx.ui.notify(`pi-autoname: AI naming failed (${msg})`, "warning");
+    ctx.ui.notify(`pi-autoname: AI naming failed (${msg.slice(0, 120)})`, "warning");
   }
 
+  // --- Smart fallback ---
   if (mode === "first-dialogue") {
     const userText = parts.find((p) => p.role === "user")?.text;
     if (userText) {
-      pi.setSessionName(fallbackName(userText));
-      return true;
+      const fb = smartFallbackName(userText);
+      pi.setSessionName(fb);
+      return { ok: true, source: "fallback" };
     }
   }
 
-  return false;
+  return { ok: false, source: false };
 }
 
 export default function extension(pi: ExtensionAPI) {
-  let named = false;
+  /**
+   * Track naming state.
+   * - false = never attempted
+   * - "ai" = successfully AI-named (locked, don't retry)
+   * - "fallback" = only got a fallback name (allow retry on later turns)
+   */
+  let namedState: false | "ai" | "fallback" = false;
+
   loadConfig();
 
   pi.on("session_start", async () => {
-    named = !!pi.getSessionName();
+    const existing = pi.getSessionName();
+    // On resume, check if existing name looks like a raw fallback
+    if (existing && !isHighQualityName(existing)) {
+      namedState = "fallback"; // allow retry
+    } else if (existing) {
+      namedState = "ai"; // good name, lock it
+    } else {
+      namedState = false;
+    }
   });
 
   pi.on("agent_end", async (_event, ctx) => {
-    if (named) return;
-    const ok = await maybeAutoname(pi, ctx, "first-dialogue");
-    if (ok) named = true;
+    // Always allow retry if previous name was low-quality fallback
+    if (namedState === "ai") return;
+
+    const result = await maybeAutoname(pi, ctx, "first-dialogue");
+    if (result.ok) {
+      namedState = result.source;
+    }
   });
 
   pi.registerCommand("autoname", {
     description: "AI-generate a session name from the current conversation context",
     handler: async (_args, ctx) => {
-      const ok = await maybeAutoname(pi, ctx, "manual");
+      const result = await maybeAutoname(pi, ctx, "manual");
       const current = pi.getSessionName();
-      if (ok && current) {
-        ctx.ui.notify(`Session renamed: ${current}`, "info");
+      if (result.ok && current) {
+        ctx.ui.notify(`Session renamed: ${current} (${result.source})`, "info");
+        namedState = result.source;
       } else if (current) {
         ctx.ui.notify(`Session unchanged: ${current}`, "info");
       } else {
