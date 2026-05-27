@@ -1,3 +1,11 @@
 node_modules/
 dist/
 *.tsbuildinfo
+.diwu/
+__pycache__/
+*.pyc
+add.js
+add.py
+calculator.py
+fibonacci.py
+hello.js
