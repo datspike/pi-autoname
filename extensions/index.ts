@@ -241,23 +241,34 @@ async function generateAIName(
 }
 
 async function maybeAutoname(pi: ExtensionAPI, ctx: any, mode: "first-dialogue" | "manual"): Promise<{ ok: boolean; source: "ai" | "fallback" | false }> {
+  console.error('[pi-autoname] maybeAutoname called, mode:', mode);
   const config = loadConfig();
-  if (config.enabled === false) return { ok: false, source: false };
+  if (config.enabled === false) {
+    console.error('[pi-autoname] disabled in config');
+    return { ok: false, source: false };
+  }
 
   // --- Model resolution with warning ---
   let model = ctx.model;
+  console.error('[pi-autoname] session model:', model?.id);
   if (config.model) {
+    console.error('[pi-autoname] configured model:', config.model);
     const resolved = resolveModelFromString(config.model);
     if (resolved) {
       model = resolved;
+      console.error('[pi-autoname] resolved model:', model?.id);
     } else {
+      console.error('[pi-autoname] model not found, using session model');
       ctx.ui.notify(
         `pi-autoname: configured model "${config.model}" not found, using session model`,
         "warning",
       );
     }
   }
-  if (!model) return { ok: false, source: false };
+  if (!model) {
+    console.error('[pi-autoname] no model available');
+    return { ok: false, source: false };
+  }
 
   // --- Dialogue extraction ---
   const branch = ctx.sessionManager.getBranch();
@@ -277,13 +288,17 @@ async function maybeAutoname(pi: ExtensionAPI, ctx: any, mode: "first-dialogue" 
 
   // --- Try AI naming ---
   try {
+    console.error('[pi-autoname] calling AI naming...');
     const aiName = await generateAIName(parts, model, ctx);
+    console.error('[pi-autoname] AI response:', aiName);
     if (aiName?.trim()) {
+      console.error('[pi-autoname] setting session name to:', aiName.trim());
       pi.setSessionName(aiName.trim());
       return { ok: true, source: "ai" };
     }
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
+    console.error('[pi-autoname] AI naming failed:', msg);
     ctx.ui.notify(`pi-autoname: AI naming failed (${msg.slice(0, 120)})`, "warning");
   }
 
@@ -292,6 +307,7 @@ async function maybeAutoname(pi: ExtensionAPI, ctx: any, mode: "first-dialogue" 
     const userText = parts.find((p) => p.role === "user")?.text;
     if (userText) {
       const fb = smartFallbackName(userText);
+      console.error('[pi-autoname] using fallback name:', fb);
       pi.setSessionName(fb);
       return { ok: true, source: "fallback" };
     }
@@ -324,10 +340,12 @@ export default function extension(pi: ExtensionAPI) {
   });
 
   pi.on("agent_end", async (_event, ctx) => {
+    console.error('[pi-autoname] agent_end event, namedState:', namedState);
     // Always allow retry if previous name was low-quality fallback
     if (namedState === "ai") return;
 
     const result = await maybeAutoname(pi, ctx, "first-dialogue");
+    console.error('[pi-autoname] maybeAutoname result:', result);
     if (result.ok) {
       namedState = result.source;
     }
