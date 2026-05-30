@@ -32,7 +32,8 @@ Config file is **auto-generated** on first use at `~/.pi/agent/pi-autoname.json`
   "model": "",
   "fallbackModels": [],
   "cooldownMinutes": 10,
-  "debug": false
+  "debug": false,
+  "respectManualName": true
 }
 ```
 
@@ -43,6 +44,7 @@ Config file is **auto-generated** on first use at `~/.pi/agent/pi-autoname.json`
 | `fallbackModels` | string[] | `[]` | Additional models to try if primary fails |
 | `cooldownMinutes` | number | `10` | Minutes between periodic re-names |
 | `debug` | boolean | `false` | Enable debug logging |
+| `respectManualName` | boolean | `true` | Do not automatically overwrite names set outside `pi-autoname` |
 
 ### Example: Model fallback chain
 
@@ -115,6 +117,10 @@ Pi's native command remains unchanged:
 ```
 
 Use `/name` for manual fixed naming, and `/autoname` for AI-generated naming.
+
+## 🔐 Privacy note
+
+`pi-autoname` sends a short, recent conversation excerpt to the selected naming model. Before sending, it redacts common secret patterns such as API keys, bearer tokens, AWS access keys, private keys, and `*_TOKEN` / `*_SECRET` / `*_PASSWORD` environment assignments. If the AI call fails and the user text contained a detected secret, the local fallback name is skipped to avoid turning secrets into session names.
 
 ## 🌍 Locale support
 
