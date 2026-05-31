@@ -5,9 +5,9 @@
  * Automatically names the session once after the first complete dialogue
  * (first user message + first assistant reply), and provides /autoname for manual renaming.
  */
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { complete, getModel } from "@earendil-works/pi-ai";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
 
@@ -15,7 +15,6 @@ import {
   normalizeConfig,
   redactSensitiveText,
   isHighQualityName,
-  blockText,
   smartFallbackName,
   getFirstDialogue,
   getRecentDialogue,
@@ -36,28 +35,44 @@ function debugLog(...args: any[]) {
   }
 }
 
+/** Config cache to avoid repeated file reads */
+let _configCache: AutonameConfig | undefined;
+let _configMtime = 0;
+
 function loadConfig(): AutonameConfig {
   try {
     if (!existsSync(CONFIG_PATH)) {
       mkdirSync(dirname(CONFIG_PATH), { recursive: true });
       writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2), "utf-8");
       _debugEnabled = DEFAULT_CONFIG.debug;
-      return { ...DEFAULT_CONFIG };
+      _configCache = { ...DEFAULT_CONFIG };
+      _configMtime = 0;
+      return _configCache;
+    }
+
+    // Check if file has changed since last read
+    const stat = statSync(CONFIG_PATH);
+    if (_configCache && stat.mtimeMs === _configMtime) {
+      return _configCache;
     }
 
     const raw = readFileSync(CONFIG_PATH, "utf-8");
     const config = normalizeConfig(JSON.parse(raw));
     _debugEnabled = config.debug ?? false;
+    _configCache = config;
+    _configMtime = stat.mtimeMs;
     return config;
   } catch (error) {
     _debugEnabled = DEFAULT_CONFIG.debug;
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[pi-autoname] failed to load config; using defaults: ${message}`);
-    return { ...DEFAULT_CONFIG };
+    _configCache = { ...DEFAULT_CONFIG };
+    _configMtime = 0;
+    return _configCache;
   }
 }
 
-function resolveModelFromString(modelStr: string, ctx: any) {
+function resolveModelFromString(modelStr: string, ctx: ExtensionContext) {
   const slashIndex = modelStr.indexOf("/");
   if (slashIndex <= 0 || slashIndex === modelStr.length - 1) return null;
 
@@ -70,7 +85,7 @@ const STATE_ENTRY_TYPE = "pi-autoname-state";
 
 type NamingSource = "ai" | "fallback";
 
-function getLastAutonameState(ctx: any): { name?: string; source?: NamingSource } | undefined {
+function getLastAutonameState(ctx: ExtensionContext): { name?: string; source?: NamingSource } | undefined {
   let state: { name?: string; source?: NamingSource } | undefined;
 
   for (const entry of ctx.sessionManager.getBranch()) {
@@ -96,15 +111,13 @@ const SYSTEM_PROMPT =
 
 let namingSequence = 0;
 
-async function generateAIName(
+/**
+ * Build the naming prompt with locale-aware instructions and redacted dialogue.
+ */
+function buildNamingPrompt(
   parts: Array<{ role: string; text: string }>,
-  model: any,
-  ctx: any,
-): Promise<string | undefined> {
-  const modelId = model?.provider + "/" + model?.id;
-  debugLog("generateAIName called with model:", modelId);
-  debugLog("dialogue parts count:", parts.length);
-  const locale = process.env.PI_LOCALE || process.env.LC_ALL || process.env.LANG || "";
+  locale: string,
+): string[] {
   const langHint = locale.startsWith("zh")
     ? "用中文（简体）输出名称"
     : locale.startsWith("ja")
@@ -135,6 +148,18 @@ async function generateAIName(
     promptParts.push("", `<${part.role}>`, safe.text.slice(0, 700), `</${part.role}>`);
   }
 
+  return promptParts;
+}
+
+/**
+ * Call model with timeout and cancellation support.
+ * Throws on timeout or cancellation; returns undefined on auth failure.
+ */
+async function callModelWithTimeout(
+  model: any,
+  promptText: string,
+  ctx: ExtensionContext,
+): Promise<any | undefined> {
   const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
   if (!auth.ok || !auth.apiKey) {
     debugLog("no API key for model:", model.provider + "/" + model.id);
@@ -142,12 +167,10 @@ async function generateAIName(
   }
   debugLog("API key found, calling complete");
 
-  // Abort the underlying request on timeout/cancellation; Promise.race alone would leak work.
-  let response: any;
-  let timedOut = false;
   const controller = new AbortController();
   const parentSignal = ctx.signal as AbortSignal | undefined;
   const abortFromParent = () => controller.abort(parentSignal?.reason);
+  let timedOut = false;
   const timeoutId = setTimeout(() => {
     timedOut = true;
     controller.abort(new Error("AI naming timed out"));
@@ -160,14 +183,14 @@ async function generateAIName(
   }
 
   try {
-    response = await complete(
+    const response = await complete(
       model,
       {
         systemPrompt: SYSTEM_PROMPT,
         messages: [
           {
             role: "user",
-            content: [{ type: "text", text: promptParts.join("\n") }],
+            content: [{ type: "text", text: promptText }],
             timestamp: Date.now(),
           },
         ],
@@ -180,9 +203,8 @@ async function generateAIName(
       },
     );
     debugLog("complete returned, stopReason:", response.stopReason);
-    if (response.errorMessage) {
-      debugLog("API error:", response.errorMessage);
-    }
+    if (response.errorMessage) debugLog("API error:", response.errorMessage);
+    return response;
   } catch (err) {
     const errMsg = timedOut ? "AI naming timed out" : err instanceof Error ? err.message : String(err);
     debugLog("complete threw error:", errMsg);
@@ -191,32 +213,34 @@ async function generateAIName(
     clearTimeout(timeoutId);
     parentSignal?.removeEventListener("abort", abortFromParent);
   }
+}
 
-  // Extract text from response - try text first, then thinking
+/**
+ * Extract and clean name from model response.
+ * Returns undefined if quality check fails.
+ */
+function extractCleanName(response: any): string | undefined {
+  // Try text content first, then thinking content
   let text = response.content
     ?.filter((c: any) => c.type === "text")
     .map((c: any) => c.text)
     .join("")
     .trim();
 
-  // If no text content, try thinking content
   if (!text) {
     text = response.content
       ?.filter((c: any) => c.type === "thinking")
       .map((c: any) => c.thinking)
       .join("")
       .trim();
-    if (text) {
-      debugLog("using thinking content as fallback");
-    }
+    if (text) debugLog("using thinking content as fallback");
   }
 
   debugLog("response text:", text?.slice(0, 100));
 
-  // Validate and clean
   const cleaned = text
     ?.replace(/^["'`\u201c\u201d\u3001]+|["'`\u201c\u201d\u3001]+$/g, "")
-    .replace(/[^\w\u4e00-\u9fff\s\-_/]/g, "")
+    .replace(/[^\w\u4e00-\u9fff\s\-_/.#+]/g, "")
     .trim();
 
   if (!cleaned || !isHighQualityName(cleaned)) {
@@ -227,20 +251,28 @@ async function generateAIName(
   return cleaned;
 }
 
-async function maybeAutoname(
-  pi: ExtensionAPI,
-  ctx: any,
-  mode: "first-dialogue" | "manual",
-): Promise<{ ok: boolean; source: NamingSource | false }> {
-  const requestId = ++namingSequence;
-  debugLog("maybeAutoname called, mode:", mode);
-  const config = loadConfig();
-  if (config.enabled === false) {
-    debugLog("disabled in config");
-    return { ok: false, source: false };
-  }
+async function generateAIName(
+  parts: Array<{ role: string; text: string }>,
+  model: any,
+  ctx: ExtensionContext,
+): Promise<string | undefined> {
+  const modelId = model?.provider + "/" + model?.id;
+  debugLog("generateAIName called with model:", modelId);
+  debugLog("dialogue parts count:", parts.length);
 
-  // --- Build model fallback chain ---
+  const locale = process.env.PI_LOCALE || process.env.LC_ALL || process.env.LANG || "";
+  const promptText = buildNamingPrompt(parts, locale).join("\n");
+
+  const response = await callModelWithTimeout(model, promptText, ctx);
+  if (!response) return undefined;
+
+  return extractCleanName(response);
+}
+
+/**
+ * Build model fallback chain from config and context.
+ */
+function buildModelChain(config: AutonameConfig, ctx: ExtensionContext): any[] {
   const models: any[] = [];
   const addedModels = new Set<string>();
 
@@ -258,19 +290,10 @@ async function maybeAutoname(
     }
   }
 
-  // 1. Primary configured model
-  if (config.model) {
-    addModel(config.model, "primary");
+  if (config.model) addModel(config.model, "primary");
+  if (config.fallbackModels) {
+    for (const fb of config.fallbackModels) addModel(fb, "fallback");
   }
-
-  // 2. Additional fallback models
-  if (config.fallbackModels && Array.isArray(config.fallbackModels)) {
-    for (const fb of config.fallbackModels) {
-      addModel(fb, "fallback");
-    }
-  }
-
-  // 3. Session model (as final fallback)
   if (ctx.model) {
     const key = ctx.model.provider + "/" + ctx.model.id;
     if (!addedModels.has(key)) {
@@ -280,39 +303,38 @@ async function maybeAutoname(
     }
   }
 
-  if (models.length === 0) {
-    debugLog("no models available");
-    return { ok: false, source: false };
-  }
+  return models;
+}
 
-  // --- Dialogue extraction ---
-  const branch = ctx.sessionManager.getBranch();
-  let parts: Array<{ role: string; text: string }> = [];
-
+/**
+ * Extract dialogue parts based on mode.
+ */
+function extractDialogueParts(
+  branch: any[],
+  mode: "first-dialogue" | "manual",
+): Array<{ role: string; text: string }> | undefined {
   if (mode === "first-dialogue") {
     const { firstUser, firstAssistant } = getFirstDialogue(branch);
-    if (!firstUser || !firstAssistant) return { ok: false, source: false };
-    parts = [
+    if (!firstUser || !firstAssistant) return undefined;
+    return [
       { role: "user", text: firstUser },
       { role: "assistant", text: firstAssistant },
     ];
-  } else {
-    parts = getRecentDialogue(branch);
-    if (parts.length === 0) return { ok: false, source: false };
   }
+  const parts = getRecentDialogue(branch);
+  return parts.length > 0 ? parts : undefined;
+}
 
-  function applyName(name: string, source: NamingSource) {
-    if (requestId !== namingSequence) {
-      debugLog("skip stale naming result:", name);
-      return false;
-    }
-    const trimmed = name.trim();
-    pi.setSessionName(trimmed);
-    rememberGeneratedName(pi, trimmed, source);
-    return true;
-  }
-
-  // --- Try AI naming with model fallback chain ---
+/**
+ * Try AI naming with model fallback chain.
+ * Returns naming result or undefined if all models failed.
+ */
+async function tryNamingWithModels(
+  parts: Array<{ role: string; text: string }>,
+  models: any[],
+  ctx: ExtensionContext,
+  applyFn: (name: string, source: NamingSource) => boolean,
+): Promise<{ ok: boolean; source: NamingSource | false } | undefined> {
   for (let i = 0; i < models.length; i++) {
     const model = models[i];
     debugLog(`trying model ${i + 1}/${models.length}:`, model.provider + "/" + model.id);
@@ -322,39 +344,90 @@ async function maybeAutoname(
       debugLog("AI response:", aiName);
       if (aiName?.trim()) {
         debugLog("setting session name to:", aiName.trim());
-        if (!applyName(aiName, "ai")) return { ok: false, source: false };
+        if (!applyFn(aiName, "ai")) return { ok: false, source: false };
         return { ok: true, source: "ai" };
       }
       debugLog("model returned empty, trying next...");
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      debugLog("model failed:", msg);
-      // Continue to next model
+      debugLog("model failed:", error instanceof Error ? error.message : String(error));
     }
   }
+  return undefined; // all models failed
+}
+
+/**
+ * Try smart fallback naming from user text.
+ */
+function tryFallbackNaming(
+  parts: Array<{ role: string; text: string }>,
+  applyFn: (name: string, source: NamingSource) => boolean,
+): { ok: boolean; source: NamingSource | false } | undefined {
+  const userText = parts.find((p) => p.role === "user")?.text;
+  if (!userText) return undefined;
+
+  const safeUserText = redactSensitiveText(userText);
+  if (safeUserText.redacted) {
+    debugLog("fallback skipped because user text contained sensitive content");
+    return { ok: false, source: false };
+  }
+
+  const fb = smartFallbackName(safeUserText.text);
+  debugLog("fallback name generated:", fb);
+
+  if (!isHighQualityName(fb)) {
+    debugLog("fallback name rejected by quality check:", fb);
+    return undefined;
+  }
+
+  debugLog("using fallback name:", fb);
+  if (!applyFn(fb, "fallback")) return { ok: false, source: false };
+  return { ok: true, source: "fallback" };
+}
+
+async function maybeAutoname(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  mode: "first-dialogue" | "manual",
+): Promise<{ ok: boolean; source: NamingSource | false }> {
+  const requestId = ++namingSequence;
+  debugLog("maybeAutoname called, mode:", mode);
+
+  const config = loadConfig();
+  if (config.enabled === false) {
+    debugLog("disabled in config");
+    return { ok: false, source: false };
+  }
+
+  const models = buildModelChain(config, ctx);
+  if (models.length === 0) {
+    debugLog("no models available");
+    return { ok: false, source: false };
+  }
+
+  const branch = ctx.sessionManager.getBranch();
+  const parts = extractDialogueParts(branch, mode);
+  if (!parts) return { ok: false, source: false };
+
+  const applyName = (name: string, source: NamingSource): boolean => {
+    if (requestId !== namingSequence) {
+      debugLog("skip stale naming result:", name);
+      return false;
+    }
+    const trimmed = name.trim();
+    pi.setSessionName(trimmed);
+    rememberGeneratedName(pi, trimmed, source);
+    return true;
+  };
+
+  // Try AI naming
+  const aiResult = await tryNamingWithModels(parts, models, ctx, applyName);
+  if (aiResult) return aiResult;
 
   debugLog("all models failed, using smart fallback");
 
-  // --- Smart fallback ---
-  const userText = parts.find((p) => p.role === "user")?.text;
-  if (userText) {
-    const safeUserText = redactSensitiveText(userText);
-    if (safeUserText.redacted) {
-      debugLog("fallback skipped because user text contained sensitive content");
-      return { ok: false, source: false };
-    }
-
-    const fb = smartFallbackName(safeUserText.text);
-    debugLog("fallback name generated:", fb);
-    // Only use fallback if it passes quality check
-    if (isHighQualityName(fb)) {
-      debugLog("using fallback name:", fb);
-      if (!applyName(fb, "fallback")) return { ok: false, source: false };
-      return { ok: true, source: "fallback" };
-    } else {
-      debugLog("fallback name rejected by quality check:", fb);
-    }
-  }
+  // Try fallback
+  const fallbackResult = tryFallbackNaming(parts, applyName);
+  if (fallbackResult) return fallbackResult;
 
   return { ok: false, source: false };
 }
