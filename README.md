@@ -33,7 +33,7 @@ Config file is **auto-generated** on first use at `~/.pi/agent/pi-autoname.json`
   "fallbackModels": [],
   "cooldownMinutes": 10,
   "debug": false,
-  "respectManualName": true
+  "respectManualName": false
 }
 ```
 
@@ -44,7 +44,7 @@ Config file is **auto-generated** on first use at `~/.pi/agent/pi-autoname.json`
 | `fallbackModels` | string[] | `[]` | Additional models to try if primary fails |
 | `cooldownMinutes` | number | `10` | Minutes between periodic re-names |
 | `debug` | boolean | `false` | Enable debug logging |
-| `respectManualName` | boolean | `true` | Do not automatically overwrite names set outside `pi-autoname` |
+| `respectManualName` | boolean | `false` | When `false` (default), pi-autoname owns session naming: automatic naming runs on first dialogue and periodically, and may overwrite a name set via `/name` or `/autoname`. Set to `true` for the legacy behavior of treating a user-issued rename as sticky. |
 
 ### Example: Model fallback chain
 
@@ -108,15 +108,23 @@ smart text extraction (no AI)
 
 Regenerates the session name from recent conversation context. Useful when you want to force an immediate rename.
 
-### Built-in `/name` still works
+### Built-in `/name` is largely redundant
 
-Pi's native command remains unchanged:
+Pi's native command still works:
 
 ```bash
 /name My custom title
 ```
 
-Use `/name` for manual fixed naming, and `/autoname` for AI-generated naming.
+However, with `pi-autoname` installed, the periodic re-naming (`cooldownMinutes` default 10 min) will likely overwrite your `/name` change on the next `agent_end`. This is the **default** behavior (`respectManualName: false`) — pi-autoname owns the session name.
+
+- For a one-shot rename that pi-autoname will then take over again: use `/name`.
+- To force a re-name from the current conversation right now: use `/autoname`.
+- To opt out of pi-autoname ever overwriting your `/name`: set `respectManualName: true` in the config.
+
+#### `/name` grace period
+
+When you `/name` a session, pi-autoname detects the out-of-band change on the next `agent_end` and **resets the rename cooldown to now**. That gives your `/name` choice a full `cooldownMinutes` window before the next periodic rename is allowed to consider overwriting it. If the conversation topic changes earlier, the periodic rename will still run normally — `/name` is a grace period, not a lock.
 
 ## 🔐 Privacy note
 

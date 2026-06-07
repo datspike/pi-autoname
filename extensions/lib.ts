@@ -34,6 +34,18 @@ export interface AutonameConfig {
   fallbackModels?: string[];
   cooldownMinutes?: number;
   debug?: boolean;
+  /**
+   * When `false` (default), pi-autoname owns session naming:
+   * automatic naming runs on first dialogue and periodically
+   * (every `cooldownMinutes`), and may overwrite a name the
+   * user set via `/name` or `/autoname`. The only escape hatch
+   * is `respectManualName: true`, which preserves the legacy
+   * behavior of treating a user-issued rename as sticky.
+   *
+   * Note: with the default behavior, Pi's built-in `/name`
+   * command is largely redundant — prefer `/autoname` if you
+   * want to force a re-name from the current conversation.
+   */
   respectManualName?: boolean;
 }
 
@@ -43,7 +55,7 @@ export const DEFAULT_CONFIG: Required<AutonameConfig> = {
   fallbackModels: [],
   cooldownMinutes: 10,
   debug: false,
-  respectManualName: true,
+  respectManualName: false,
 };
 
 export function normalizeConfig(input: unknown): AutonameConfig {
@@ -126,6 +138,54 @@ export function smartFallbackName(text: string): string {
   s = s.replace(/[。！？!?.…]+\s*$/, "").trim();
 
   return s || text.slice(0, 40).replace(/\n/g, " ").trim();
+}
+
+/** A persisted pi-autoname state marker — one of three flavors. */
+export type RenameMarker =
+  | { kind: "ai"; name: string; source: "ai"; timestamp: number }
+  | { kind: "fallback"; name: string; source: "fallback"; timestamp: number }
+  | { kind: "user_rename"; name: string; timestamp: number };
+
+/**
+ * Parse a single `pi-autoname-state` entry's `data` payload into a typed
+ * RenameMarker. Returns undefined when the payload doesn't match any
+ * known shape (e.g. legacy entries from older versions, or corrupted
+ * data). When parsing the timestamp, defaults to 0 if missing/invalid
+ * so that the marker is still useful for relative ordering.
+ */
+export function parseRenameMarker(data: unknown): RenameMarker | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const obj = data as Record<string, unknown>;
+
+  // user_rename flavor — written by agent_end when it detects a /name
+  // out-of-band change.
+  if (obj.event === "user_rename" && typeof obj.name === "string") {
+    return {
+      kind: "user_rename",
+      name: obj.name,
+      timestamp: typeof obj.timestamp === "number" ? obj.timestamp : 0,
+    };
+  }
+
+  // ai / fallback flavor — written after a successful naming pass.
+  if (obj.source === "ai" && typeof obj.name === "string") {
+    return {
+      kind: "ai",
+      name: obj.name,
+      source: "ai",
+      timestamp: typeof obj.timestamp === "number" ? obj.timestamp : 0,
+    };
+  }
+  if (obj.source === "fallback" && typeof obj.name === "string") {
+    return {
+      kind: "fallback",
+      name: obj.name,
+      source: "fallback",
+      timestamp: typeof obj.timestamp === "number" ? obj.timestamp : 0,
+    };
+  }
+
+  return undefined;
 }
 
 export function getFirstDialogue(branch: any[]) {

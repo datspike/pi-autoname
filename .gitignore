@@ -2,6 +2,7 @@ node_modules/
 dist/
 *.tsbuildinfo
 .diwu/
+.dteam/
 __pycache__/
 *.pyc
 add.js

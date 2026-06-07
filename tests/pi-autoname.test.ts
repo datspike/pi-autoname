@@ -7,6 +7,7 @@ import {
   smartFallbackName,
   getFirstDialogue,
   getRecentDialogue,
+  parseRenameMarker,
   DEFAULT_CONFIG,
   MIN_NAME_LENGTH,
   MAX_NAME_LENGTH,
@@ -47,6 +48,18 @@ describe("normalizeConfig", () => {
     expect(normalizeConfig({ cooldownMinutes: 2000 }).cooldownMinutes).toBe(MAX_COOLDOWN_MINUTES);
     expect(normalizeConfig({ cooldownMinutes: NaN }).cooldownMinutes).toBe(DEFAULT_CONFIG.cooldownMinutes);
     expect(normalizeConfig({ cooldownMinutes: Infinity }).cooldownMinutes).toBe(DEFAULT_CONFIG.cooldownMinutes);
+  });
+
+  it("respectManualName: true override is preserved (legacy escape hatch)", () => {
+    const result = normalizeConfig({ respectManualName: true });
+    expect(result.respectManualName).toBe(true);
+  });
+
+  it("DEFAULT_CONFIG defaults respectManualName to false (pi-autoname owns naming)", () => {
+    // Product intent: once pi-autoname is installed, automatic naming owns
+    // the session name. `/name` is effectively redundant. The legacy
+    // `respectManualName: true` opt-in must remain an explicit escape hatch.
+    expect(DEFAULT_CONFIG.respectManualName).toBe(false);
   });
 
   it("rejects non-string fallbackModels entries", () => {
@@ -341,5 +354,83 @@ describe("getRecentDialogue", () => {
 
   it("returns empty for empty branch", () => {
     expect(getRecentDialogue([])).toEqual([]);
+  });
+});
+
+describe("parseRenameMarker", () => {
+  it("parses an ai source marker", () => {
+    const marker = parseRenameMarker({
+      name: "测试自动命名",
+      source: "ai",
+      timestamp: 1700000000000,
+    });
+    expect(marker).toEqual({
+      kind: "ai",
+      name: "测试自动命名",
+      source: "ai",
+      timestamp: 1700000000000,
+    });
+  });
+
+  it("parses a fallback source marker", () => {
+    const marker = parseRenameMarker({
+      name: "fallback-name",
+      source: "fallback",
+      timestamp: 1700000000001,
+    });
+    expect(marker?.kind).toBe("fallback");
+  });
+
+  it("parses a user_rename marker (recorded by agent_end)", () => {
+    const marker = parseRenameMarker({
+      event: "user_rename",
+      name: "My Custom Title",
+      timestamp: 1700000000002,
+    });
+    expect(marker).toEqual({
+      kind: "user_rename",
+      name: "My Custom Title",
+      timestamp: 1700000000002,
+    });
+  });
+
+  it("prefers user_rename over source when both are present (defensive)", () => {
+    // Defensive: malformed data shouldn't reach this point, but if it
+    // does, the user_rename branch wins because it has more context.
+    const marker = parseRenameMarker({
+      event: "user_rename",
+      name: "X",
+      source: "ai",
+      timestamp: 1,
+    });
+    expect(marker?.kind).toBe("user_rename");
+  });
+
+  it("returns undefined for non-object data", () => {
+    expect(parseRenameMarker(null)).toBeUndefined();
+    expect(parseRenameMarker(undefined)).toBeUndefined();
+    expect(parseRenameMarker("string")).toBeUndefined();
+    expect(parseRenameMarker(42)).toBeUndefined();
+  });
+
+  it("returns undefined when neither flavor matches", () => {
+    expect(parseRenameMarker({})).toBeUndefined();
+    expect(parseRenameMarker({ name: "x" })).toBeUndefined();
+    expect(parseRenameMarker({ source: "bogus", name: "x" })).toBeUndefined();
+    expect(parseRenameMarker({ event: "user_rename" })).toBeUndefined();
+    expect(parseRenameMarker({ event: "user_rename", name: 123 })).toBeUndefined();
+  });
+
+  it("defaults missing timestamp to 0", () => {
+    const marker = parseRenameMarker({
+      name: "X",
+      source: "ai",
+    });
+    expect(marker).toEqual({
+      kind: "ai",
+      name: "X",
+      source: "ai",
+      timestamp: 0,
+    });
   });
 });

@@ -18,8 +18,10 @@ import {
   smartFallbackName,
   getFirstDialogue,
   getRecentDialogue,
+  parseRenameMarker,
   DEFAULT_CONFIG,
   type AutonameConfig,
+  type RenameMarker,
 } from "./lib.js";
 
 const CONFIG_PATH = join(homedir(), ".pi", "agent", "pi-autoname.json");
@@ -27,11 +29,32 @@ const CONFIG_PATH = join(homedir(), ".pi", "agent", "pi-autoname.json");
 /** Max time to wait for AI naming response (ms) */
 const AI_TIMEOUT_MS = 30_000;
 
-/** Debug logging helper */
+/** Three-state naming status — what we know about the current session name. */
+type NamingState = "unnamed" | "named" | "fallback";
+
+/** Source of a generated name, persisted in `pi-autoname-state` entries. */
+type NamingSource = "ai" | "fallback";
+
+/**
+ * Single debug switch: when `debug: true` in the config file, all
+ * `debugLog` calls are emitted to stderr. When `false` (the default),
+ * nothing is logged. There is no separate verbose level — one boolean
+ * controls everything.
+ */
 let _debugEnabled = false;
 function debugLog(...args: any[]) {
   if (_debugEnabled) {
-    console.error("[pi-autoname]", ...args);
+    const ts = new Date().toISOString().split("T")[1]?.replace("Z", "") ?? "";
+    console.error(`[pi-autoname ${ts}] ${args.map((a) => (typeof a === "string" ? a : safeJson(a))).join(" ")}`);
+  }
+}
+
+function safeJson(v: any): string {
+  try {
+    if (v instanceof Error) return v.message;
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
   }
 }
 
@@ -78,28 +101,27 @@ function resolveModelFromString(modelStr: string, ctx: ExtensionContext) {
 
   const provider = modelStr.slice(0, slashIndex);
   const modelId = modelStr.slice(slashIndex + 1);
-  return ctx?.modelRegistry?.find?.(provider, modelId) ?? (getModel as any)(provider, modelId);
+  const resolved = ctx?.modelRegistry?.find?.(provider, modelId) ?? (getModel as any)(provider, modelId);
+  if (!resolved) {
+    debugLog(`model resolve failed: ${modelStr}`);
+  } else {
+    debugLog(`model resolved: ${modelStr} ->`, { provider: resolved.provider, id: resolved.id, api: resolved.api });
+  }
+  return resolved;
 }
 
 const STATE_ENTRY_TYPE = "pi-autoname-state";
 
-type NamingSource = "ai" | "fallback";
-
-function getLastAutonameState(ctx: ExtensionContext): { name?: string; source?: NamingSource } | undefined {
-  let state: { name?: string; source?: NamingSource } | undefined;
+function getLastRenameMarker(ctx: ExtensionContext): RenameMarker | undefined {
+  let marker: RenameMarker | undefined;
 
   for (const entry of ctx.sessionManager.getBranch()) {
     if (entry?.type !== "custom" || entry.customType !== STATE_ENTRY_TYPE) continue;
-    const data = entry.data;
-    if (!data || typeof data !== "object") continue;
-    if (data.source !== "ai" && data.source !== "fallback") continue;
-    state = {
-      name: typeof data.name === "string" ? data.name : undefined,
-      source: data.source,
-    };
+    const parsed = parseRenameMarker(entry.data);
+    if (parsed) marker = parsed;
   }
 
-  return state;
+  return marker;
 }
 
 function rememberGeneratedName(pi: ExtensionAPI, name: string, source: NamingSource) {
@@ -160,12 +182,20 @@ async function callModelWithTimeout(
   promptText: string,
   ctx: ExtensionContext,
 ): Promise<any | undefined> {
-  const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
-  if (!auth.ok || !auth.apiKey) {
-    debugLog("no API key for model:", model.provider + "/" + model.id);
+  debugLog("callModelWithTimeout, model:", model?.provider + "/" + model?.id, "api:", model?.api);
+
+  let auth: any;
+  try {
+    auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+  } catch (err) {
+    debugLog("getApiKeyAndHeaders threw:", err instanceof Error ? err.message : String(err));
     return undefined;
   }
-  debugLog("API key found, calling complete");
+  if (!auth || !auth.ok || !auth.apiKey) {
+    debugLog("no API key for model:", model.provider + "/" + model.id, "auth:", auth);
+    return undefined;
+  }
+  // (intentionally not logging headers keys — auth details)
 
   const controller = new AbortController();
   const parentSignal = ctx.signal as AbortSignal | undefined;
@@ -182,6 +212,7 @@ async function callModelWithTimeout(
     parentSignal?.addEventListener("abort", abortFromParent, { once: true });
   }
 
+  const t0 = Date.now();
   try {
     const response = await complete(
       model,
@@ -202,12 +233,14 @@ async function callModelWithTimeout(
         signal: controller.signal,
       },
     );
-    debugLog("complete returned, stopReason:", response.stopReason);
+    const elapsed = Date.now() - t0;
+    debugLog("complete returned in " + elapsed + "ms, stopReason:", response.stopReason, "errorMessage:", response.errorMessage);
     if (response.errorMessage) debugLog("API error:", response.errorMessage);
     return response;
   } catch (err) {
-    const errMsg = timedOut ? "AI naming timed out" : err instanceof Error ? err.message : String(err);
-    debugLog("complete threw error:", errMsg);
+    const elapsed = Date.now() - t0;
+    const errMsg = timedOut ? `AI naming timed out (after ${elapsed}ms)` : `complete threw after ${elapsed}ms: ` + (err instanceof Error ? err.message : String(err));
+    debugLog(errMsg);
     throw new Error(errMsg);
   } finally {
     clearTimeout(timeoutId);
@@ -244,7 +277,7 @@ function extractCleanName(response: any): string | undefined {
     .trim();
 
   if (!cleaned || !isHighQualityName(cleaned)) {
-    debugLog("AI name rejected by quality check:", cleaned);
+    debugLog("AI name rejected by quality check:", cleaned, "raw length:", text?.length);
     return undefined;
   }
 
@@ -257,8 +290,7 @@ async function generateAIName(
   ctx: ExtensionContext,
 ): Promise<string | undefined> {
   const modelId = model?.provider + "/" + model?.id;
-  debugLog("generateAIName called with model:", modelId);
-  debugLog("dialogue parts count:", parts.length);
+  debugLog("generateAIName with model:", modelId, "dialogue parts:", parts.length);
 
   const locale = process.env.PI_LOCALE || process.env.LC_ALL || process.env.LANG || "";
   const promptText = buildNamingPrompt(parts, locale).join("\n");
@@ -303,6 +335,7 @@ function buildModelChain(config: AutonameConfig, ctx: ExtensionContext): any[] {
     }
   }
 
+  debugLog("model chain:", models.map((m) => m.provider + "/" + m.id).join(", "));
   return models;
 }
 
@@ -315,13 +348,19 @@ function extractDialogueParts(
 ): Array<{ role: string; text: string }> | undefined {
   if (mode === "first-dialogue") {
     const { firstUser, firstAssistant } = getFirstDialogue(branch);
-    if (!firstUser || !firstAssistant) return undefined;
+    if (!firstUser || !firstAssistant) {
+      debugLog("first-dialogue missing: firstUser=", !!firstUser, "firstAssistant=", !!firstAssistant);
+      return undefined;
+    }
     return [
       { role: "user", text: firstUser },
       { role: "assistant", text: firstAssistant },
     ];
   }
   const parts = getRecentDialogue(branch);
+  if (parts.length === 0) {
+    debugLog("manual: getRecentDialogue returned empty");
+  }
   return parts.length > 0 ? parts : undefined;
 }
 
@@ -390,7 +429,7 @@ async function maybeAutoname(
   mode: "first-dialogue" | "manual",
 ): Promise<{ ok: boolean; source: NamingSource | false }> {
   const requestId = ++namingSequence;
-  debugLog("maybeAutoname called, mode:", mode);
+  debugLog("maybeAutoname called, mode:", mode, "requestId:", requestId);
 
   const config = loadConfig();
   if (config.enabled === false) {
@@ -406,7 +445,10 @@ async function maybeAutoname(
 
   const branch = ctx.sessionManager.getBranch();
   const parts = extractDialogueParts(branch, mode);
-  if (!parts) return { ok: false, source: false };
+  if (!parts) {
+    debugLog("no dialogue parts to name from");
+    return { ok: false, source: false };
+  }
 
   const applyName = (name: string, source: NamingSource): boolean => {
     if (requestId !== namingSequence) {
@@ -434,13 +476,12 @@ async function maybeAutoname(
 
 export default function extension(pi: ExtensionAPI) {
   /**
-   * Track naming state.
-   * - false = never attempted
-   * - "ai" = successfully AI-named
-   * - "fallback" = only got a fallback name (allow retry on later turns)
-   * - "manual" = existing name was set outside this extension; do not overwrite automatically
+   * Current naming status:
+   * - "unnamed"  → no name has been applied yet; trigger first-dialogue naming
+   * - "named"    → a high-quality name is in place; cooldown controls periodic re-naming
+   * - "fallback" → only got a low-quality fallback name; allow retry on next turn
    */
-  let namedState: false | NamingSource | "manual" = false;
+  let namingState: NamingState = "unnamed";
 
   /** Last rename timestamp */
   let lastRenameTime = 0;
@@ -450,97 +491,126 @@ export default function extension(pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     const existing = pi.getSessionName();
-    const currentConfig = loadConfig();
-    const lastAutonameState = getLastAutonameState(ctx);
+    const marker = getLastRenameMarker(ctx);
 
-    // On resume, only treat an existing name as extension-owned when we persisted it.
-    if (existing && lastAutonameState?.name === existing && lastAutonameState.source) {
-      namedState = lastAutonameState.source;
+    debugLog("session_start: existing=", existing, "marker=", marker);
+
+    // Restore from the latest persisted marker. Three cases:
+    //   1. user_rename marker with matching name → user just took control
+    //      via `/name`. Treat as `named` and reset cooldown to the
+    //      user's rename moment, so periodic rename won't fire
+    //      immediately and stomp on the user's intent.
+    //   2. ai/fallback marker with matching name → our previous naming.
+    //      Restore the source-level state.
+    //   3. No match (no marker, or name diverged) → fresh session, run
+    //      first-dialogue on the next `agent_end`.
+    if (marker?.kind === "user_rename" && existing === marker.name) {
+      namingState = "named";
       lastGeneratedName = existing;
-    } else if (existing && currentConfig.respectManualName !== false) {
-      namedState = "manual";
-      lastGeneratedName = undefined;
-    } else if (existing && !isHighQualityName(existing)) {
-      namedState = "fallback"; // allow retry for low-quality legacy names
-      lastGeneratedName = undefined;
-    } else if (existing) {
-      namedState = "ai";
+      lastRenameTime = marker.timestamp;
+    } else if (
+      existing &&
+      (marker?.kind === "ai" || marker?.kind === "fallback") &&
+      marker.name === existing
+    ) {
+      namingState = marker.source === "ai" ? "named" : "fallback";
       lastGeneratedName = existing;
+      lastRenameTime = marker.timestamp;
     } else {
-      namedState = false;
+      namingState = "unnamed";
       lastGeneratedName = undefined;
+      lastRenameTime = 0; // will be set below
     }
-    // Reset cooldown on session start
-    lastRenameTime = Date.now();
+    debugLog(
+      "session_start: namingState=", namingState,
+      "lastGeneratedName=", lastGeneratedName,
+      "lastRenameTime=",
+      lastRenameTime ? Math.round((Date.now() - lastRenameTime) / 1000) + "s ago" : "0",
+    );
+    // Reset cooldown to "now" only for genuinely fresh sessions. If we
+    // restored a marker above, we already set lastRenameTime correctly.
+    if (lastRenameTime === 0) lastRenameTime = Date.now();
   });
 
   pi.on("agent_end", async (_event, ctx) => {
     const now = Date.now();
-    const timeSinceLastRename = now - lastRenameTime;
     const currentConfig = loadConfig();
     const renameCooldownMs = (currentConfig.cooldownMinutes ?? DEFAULT_CONFIG.cooldownMinutes) * 60 * 1000;
 
+    // ── User-rename detection ────────────────────────────────────────────
+    // If the session name has changed since we last saw it AND we didn't
+    // change it ourselves, the user must have run `/name` (or the
+    // session-selector rename UI). Reset the cooldown so the next
+    // periodic rename gives the user a full `cooldownMinutes` grace
+    // period before considering overwriting their choice.
+    const currentName = pi.getSessionName();
+    if (
+      currentName &&
+      lastGeneratedName !== undefined &&
+      currentName !== lastGeneratedName
+    ) {
+      debugLog("user rename detected:", lastGeneratedName, "→", currentName, "→ resetting cooldown");
+      lastRenameTime = now;
+      pi.appendEntry(STATE_ENTRY_TYPE, {
+        event: "user_rename",
+        name: currentName,
+        timestamp: now,
+      });
+      lastGeneratedName = currentName;
+    } else if (currentName) {
+      // Track the name we just observed so a future change is detectable
+      // even if `lastGeneratedName` was undefined at session_start.
+      lastGeneratedName = currentName;
+    }
+
+    const timeSinceLastRename = now - lastRenameTime;
     debugLog(
-      "agent_end, namedState:",
-      namedState,
-      "timeSinceLastRename:",
-      Math.round(timeSinceLastRename / 1000) + "s",
+      "agent_end: namingState=", namingState,
+      "timeSinceLastRename=", Math.round(timeSinceLastRename / 1000) + "s",
+      "cooldownMs=", renameCooldownMs,
     );
 
-    // First dialogue: always try if not yet named
-    if (namedState === false || namedState === "fallback") {
+    // First dialogue (or retry after a low-quality fallback): try once.
+    if (namingState === "unnamed" || namingState === "fallback") {
+      debugLog("agent_end: triggering first-dialogue naming");
       const result = await maybeAutoname(pi, ctx, "first-dialogue");
       debugLog("first-dialogue result:", result);
       if (result.ok) {
-        namedState = result.source;
+        namingState = result.source === "ai" ? "named" : "fallback";
         lastGeneratedName = pi.getSessionName();
         lastRenameTime = now;
       }
       return;
     }
 
-    if (namedState === "manual") {
-      debugLog("manual session name detected, skipping automatic rename");
+    // namingState === "named": periodic re-naming gated by cooldown.
+    if (timeSinceLastRename < renameCooldownMs) {
+      debugLog("cooldown not yet passed, skipping");
+      return;
+    }
+    debugLog("cooldown passed, trying periodic rename");
+    const result = await maybeAutoname(pi, ctx, "manual");
+
+    if (!result.ok) {
+      debugLog("periodic rename failed (all models + fallback failed)");
       return;
     }
 
-    const currentSessionName = pi.getSessionName();
-    if (
-      currentConfig.respectManualName !== false &&
-      currentSessionName &&
-      lastGeneratedName &&
-      currentSessionName !== lastGeneratedName
-    ) {
-      namedState = "manual";
-      debugLog("session name changed outside pi-autoname, skipping automatic rename");
-      return;
+    const newName = pi.getSessionName();
+    if (newName && newName !== currentName) {
+      debugLog("name updated:", currentName, "->", newName);
+      lastGeneratedName = newName;
+    } else {
+      debugLog("name unchanged, resetting cooldown");
+      lastGeneratedName = newName ?? lastGeneratedName;
     }
-
-    // Periodic renaming: only if cooldown has passed
-    if (timeSinceLastRename >= renameCooldownMs) {
-      debugLog("cooldown passed, trying periodic rename");
-      const currentName = pi.getSessionName();
-      const result = await maybeAutoname(pi, ctx, "manual");
-
-      if (result.ok) {
-        const newName = pi.getSessionName();
-        // Only update if name actually changed
-        if (newName && newName !== currentName) {
-          debugLog("name updated:", currentName, "->", newName);
-          lastGeneratedName = newName;
-          lastRenameTime = now;
-        } else {
-          debugLog("name unchanged, resetting cooldown");
-          lastGeneratedName = newName ?? lastGeneratedName;
-          lastRenameTime = now; // Reset cooldown even if name unchanged
-        }
-      }
-    }
+    lastRenameTime = now;
   });
 
   pi.registerCommand("autoname", {
     description: "AI-generate a session name from the current conversation context",
     handler: async (_args, ctx) => {
+      debugLog("/autoname command invoked");
       const result = await maybeAutoname(pi, ctx, "manual");
       const current = pi.getSessionName();
       if (result.ok && current) {
@@ -549,9 +619,11 @@ export default function extension(pi: ExtensionAPI) {
         } else {
           ctx.ui.notify(`Session renamed (fallback): ${current}`, "warning");
         }
-        namedState = result.source;
+        namingState = result.source === "ai" ? "named" : "fallback";
         lastGeneratedName = current;
+        lastRenameTime = Date.now();
       } else {
+        debugLog("/autoname: naming failed");
         ctx.ui.notify("pi-autoname: could not generate a name", "warning");
       }
     },
