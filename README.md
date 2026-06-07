@@ -1,8 +1,18 @@
-# pi-autoname
+<p align="center">
+  <img src="https://github.com/ssdiwu/pi-autoname/releases/download/readme-assets/pi-autoname-cover.png" alt="pi-autoname cover" width="100%" />
+</p>
 
-> **Give your Pi sessions meaningful names — powered by AI.**
+<p align="center">
+  <strong>AI-powered semantic session naming for Pi.</strong>
+</p>
 
-`pi-autoname` automatically names your session after the first dialogue, **periodically renames as the conversation evolves**, and provides **`/autoname`** for manual re-naming.
+<p align="center">
+  Automatically name sessions after the first dialogue, periodically re-name as the conversation evolves, and regenerate on demand with <code>/autoname</code>.
+</p>
+
+<p align="center">
+  <code>pi install npm:pi-autoname</code>
+</p>
 
 ## ✨ What it does
 

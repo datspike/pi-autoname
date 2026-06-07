@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-06-08
+
+### Changed
+
+- Refresh README hero section with a cover image, tighter value proposition, and a centered install command for GitHub/npm presentation.
+
 ## [0.6.0] - 2026-06-07
 
 ### Changed (breaking)
