@@ -1,6 +1,6 @@
 {
   "name": "pi-autoname",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "AI-powered session naming for Pi — generate meaningful, semantic session names via LLM",
   "type": "module",
   "keywords": [
@@ -22,6 +22,7 @@
     "url": "https://github.com/ssdiwu/pi-autoname/issues"
   },
   "files": [
+    "index.ts",
     "extensions/",
     "README.md",
     "LICENSE",
@@ -43,7 +44,7 @@
   },
   "pi": {
     "extensions": [
-      "./extensions"
+      "./index.ts"
     ]
   }
 }
