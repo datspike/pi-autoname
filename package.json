@@ -30,8 +30,8 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "vitest run --pool=threads",
+    "test:watch": "vitest --pool=threads"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",

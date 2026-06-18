@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Extension lifecycle tests for `session_start`, `agent_end`, cooldown gating, out-of-band `/name` detection, and current-session JSONL diagnostics.
+- `readSessionFileDiagnostics()` helper to inspect the active session file's latest `session_info` and `pi-autoname-state` entries during debug runs.
+
+### Changed
+
+- Test scripts now use Vitest's `threads` pool so `npm test` works reliably in environments where forked workers fail to boot.
+
 ## [0.6.2] - 2026-06-08
 
 ### Fixed

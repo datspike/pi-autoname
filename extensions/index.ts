@@ -112,6 +112,52 @@ function resolveModelFromString(modelStr: string, ctx: ExtensionContext) {
 
 const STATE_ENTRY_TYPE = "pi-autoname-state";
 
+export interface SessionFileDiagnostics {
+  sessionFile: string;
+  latestSessionName?: string;
+  latestRenameMarker?: RenameMarker;
+  parseErrors: number;
+}
+
+export function readSessionFileDiagnostics(sessionFile: string | undefined): SessionFileDiagnostics | undefined {
+  if (!sessionFile) return undefined;
+
+  try {
+    const raw = readFileSync(sessionFile, "utf-8");
+    let latestSessionName: string | undefined;
+    let latestRenameMarker: RenameMarker | undefined;
+    let parseErrors = 0;
+
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      try {
+        const entry = JSON.parse(trimmed);
+        if (entry?.type === "session_info" && typeof entry.name === "string") {
+          latestSessionName = entry.name;
+        }
+        if (entry?.type === "custom" && entry.customType === STATE_ENTRY_TYPE) {
+          const parsed = parseRenameMarker(entry.data);
+          if (parsed) latestRenameMarker = parsed;
+        }
+      } catch {
+        parseErrors += 1;
+      }
+    }
+
+    return {
+      sessionFile,
+      latestSessionName,
+      latestRenameMarker,
+      parseErrors,
+    };
+  } catch (error) {
+    debugLog("readSessionFileDiagnostics failed:", sessionFile, error instanceof Error ? error.message : String(error));
+    return undefined;
+  }
+}
+
 function getLastRenameMarker(ctx: ExtensionContext): RenameMarker | undefined {
   let marker: RenameMarker | undefined;
 
@@ -492,8 +538,9 @@ export default function extension(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     const existing = pi.getSessionName();
     const marker = getLastRenameMarker(ctx);
+    const sessionFileDiagnostics = _debugEnabled ? readSessionFileDiagnostics(ctx.sessionManager.getSessionFile?.()) : undefined;
 
-    debugLog("session_start: existing=", existing, "marker=", marker);
+    debugLog("session_start: existing=", existing, "marker=", marker, "sessionFileDiagnostics=", sessionFileDiagnostics);
 
     // Restore from the latest persisted marker. Three cases:
     //   1. user_rename marker with matching name → user just took control
@@ -536,6 +583,7 @@ export default function extension(pi: ExtensionAPI) {
     const now = Date.now();
     const currentConfig = loadConfig();
     const renameCooldownMs = (currentConfig.cooldownMinutes ?? DEFAULT_CONFIG.cooldownMinutes) * 60 * 1000;
+    const sessionFileDiagnostics = _debugEnabled ? readSessionFileDiagnostics(ctx.sessionManager.getSessionFile?.()) : undefined;
 
     // ── User-rename detection ────────────────────────────────────────────
     // If the session name has changed since we last saw it AND we didn't
@@ -568,6 +616,7 @@ export default function extension(pi: ExtensionAPI) {
       "agent_end: namingState=", namingState,
       "timeSinceLastRename=", Math.round(timeSinceLastRename / 1000) + "s",
       "cooldownMs=", renameCooldownMs,
+      "sessionFileDiagnostics=", sessionFileDiagnostics,
     );
 
     // First dialogue (or retry after a low-quality fallback): try once.
