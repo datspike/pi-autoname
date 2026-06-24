@@ -22,7 +22,7 @@ import {
   DEFAULT_CONFIG,
   type AutonameConfig,
   type RenameMarker,
-} from "./lib.js";
+} from "./lib.ts";
 
 const CONFIG_PATH = join(homedir(), ".pi", "agent", "pi-autoname.json");
 
