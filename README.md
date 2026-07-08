@@ -52,6 +52,9 @@ Config file is **auto-generated** on first use at `~/.pi/agent/pi-autoname.json`
   "fallbackModels": [],
   "cooldownMinutes": 10,
   "debug": false,
+  "maxNameLength": 30,
+  "promptExtra": "",
+  "ticketPattern": "",
   "respectManualName": false
 }
 ```
@@ -63,6 +66,9 @@ Config file is **auto-generated** on first use at `~/.pi/agent/pi-autoname.json`
 | `fallbackModels` | string[] | `[]` | Additional models to try if primary fails |
 | `cooldownMinutes` | number | `10` | Minutes between periodic re-names |
 | `debug` | boolean | `false` | Enable debug logging |
+| `maxNameLength` | number | `30` | Max accepted generated name length. Clamped to `3..120` |
+| `promptExtra` | string | `""` | Extra instruction appended to the naming prompt |
+| `ticketPattern` | string | `""` | Optional regex. First capture group, or the full match, is forced as the generated name prefix |
 | `respectManualName` | boolean | `false` | When `false` (default), pi-autoname owns session naming: automatic naming runs on first dialogue and periodically, and may overwrite a name set via `/name` or `/autoname`. Set to `true` for the legacy behavior of treating a user-issued rename as sticky. |
 
 ### Example: Model fallback chain
@@ -79,6 +85,18 @@ Config file is **auto-generated** on first use at `~/.pi/agent/pi-autoname.json`
 ```
 
 This tries models in order: `MiniMax-M2.7` → `mimo-v2-omni` → session model.
+
+### Example: Longer names with work-ticket prefixes
+
+```json
+{
+  "maxNameLength": 80,
+  "promptExtra": "Prefer longer, descriptive names. If a task ticket is present, keep it at the beginning.",
+  "ticketPattern": "\\b([A-Z]+-\\d+)\\b"
+}
+```
+
+When `ticketPattern` matches recent conversation context, pi-autoname prefixes the generated name with the first capture group (or the full match when there is no capture group).
 
 ## 🏗️ How it works
 

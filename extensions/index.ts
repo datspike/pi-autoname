@@ -19,7 +19,8 @@ import {
   getFirstDialogue,
   getRecentDialogue,
   parseRenameMarker,
-  shouldRunAutomaticRename,
+  extractTicketPrefix,
+  withTicketPrefix,
   DEFAULT_CONFIG,
   type AutonameConfig,
   type RenameMarker,
@@ -70,7 +71,7 @@ function loadConfig(): AutonameConfig {
       writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2), "utf-8");
       _debugEnabled = DEFAULT_CONFIG.debug;
       _configCache = { ...DEFAULT_CONFIG };
-      _configMtime = statSync(CONFIG_PATH).mtimeMs;
+      _configMtime = 0;
       return _configCache;
     }
 
@@ -87,10 +88,9 @@ function loadConfig(): AutonameConfig {
     _configMtime = stat.mtimeMs;
     return config;
   } catch (error) {
-    const debugEnabled = _configCache?.debug ?? DEFAULT_CONFIG.debug;
-    _debugEnabled = debugEnabled;
+    _debugEnabled = DEFAULT_CONFIG.debug;
     const message = error instanceof Error ? error.message : String(error);
-    debugLog(`failed to load config; using defaults: ${message}`);
+    console.error(`[pi-autoname] failed to load config; using defaults: ${message}`);
     _configCache = { ...DEFAULT_CONFIG };
     _configMtime = 0;
     return _configCache;
@@ -184,26 +184,34 @@ let namingSequence = 0;
 /**
  * Build the naming prompt with locale-aware instructions and redacted dialogue.
  */
-export function buildNamingPrompt(
+function buildNamingPrompt(
   parts: Array<{ role: string; text: string }>,
   locale: string,
+  config: AutonameConfig,
+  ticketPrefix?: string,
 ): string[] {
-  const normalizedLocale = locale.trim().toLowerCase();
-  const hasLanguage = (language: string) => new RegExp(`^${language}(?:$|[_.-])`).test(normalizedLocale);
-  const langHint = hasLanguage("zh")
+  const normalizedLocale = locale.toLowerCase();
+  const englishLikeLocale =
+    normalizedLocale.startsWith("en") ||
+    !normalizedLocale ||
+    normalizedLocale === "c" ||
+    normalizedLocale.startsWith("c.") ||
+    normalizedLocale === "posix";
+  const langHint = normalizedLocale.startsWith("zh")
     ? "用中文（简体）输出名称"
-    : hasLanguage("ja")
+    : normalizedLocale.startsWith("ja")
       ? "日本語で出力"
-      : hasLanguage("ko")
+      : normalizedLocale.startsWith("ko")
         ? "한국어로 출력"
-        : hasLanguage("ru")
-          ? "Пиши название по-русски"
-          : "Output in English";
+        : englishLikeLocale
+          ? "Output in English"
+          : `Output in the language indicated by this locale: ${locale}`;
+  const maxNameLength = config.maxNameLength ?? DEFAULT_CONFIG.maxNameLength;
 
   const promptParts = [
     `${langHint}.`,
     "",
-    "Generate a concise session name (5-15 characters/words) for this AI coding conversation.",
+    `Generate a concise session name (up to ${maxNameLength} characters) for this AI coding conversation.`,
     "Reflect the real project/task being worked on, not the literal first sentence.",
     "Output ONLY the name string, nothing else. No punctuation, no quotes, no explanation.",
     "",
@@ -215,6 +223,13 @@ export function buildNamingPrompt(
     "- Examples of GOOD names: API重构, 部署脚本调试, 数据库迁移, Session naming fix",
     "- Examples of BAD names: 好的我来帮你做, Let me help you with that, 已经完成了配置",
   ];
+
+  if (ticketPrefix) {
+    promptParts.push("", "If this ticket belongs to the task, start the name with it:", ticketPrefix);
+  }
+  if (config.promptExtra?.trim()) {
+    promptParts.push("", "USER NAMING PREFERENCE:", config.promptExtra.trim());
+  }
 
   for (const part of parts) {
     const safe = redactSensitiveText(part.text);
@@ -304,7 +319,7 @@ async function callModelWithTimeout(
  * Extract and clean name from model response.
  * Returns undefined if quality check fails.
  */
-export function extractCleanName(response: any): string | undefined {
+function extractCleanName(response: any, maxNameLength = DEFAULT_CONFIG.maxNameLength): string | undefined {
   // Try text content first, then thinking content
   let text = response.content
     ?.filter((c: any) => c.type === "text")
@@ -325,10 +340,10 @@ export function extractCleanName(response: any): string | undefined {
 
   const cleaned = text
     ?.replace(/^["'`\u201c\u201d\u3001]+|["'`\u201c\u201d\u3001]+$/g, "")
-    .replace(/[^\p{L}\p{N}\p{M}\s\-_/.#+]/gu, "")
+    .replace(/[^\p{L}\p{N}\s\-_/.#+]/gu, "")
     .trim();
 
-  if (!cleaned || !isHighQualityName(cleaned)) {
+  if (!cleaned || !isHighQualityName(cleaned, maxNameLength)) {
     debugLog("AI name rejected by quality check:", cleaned, "raw length:", text?.length);
     return undefined;
   }
@@ -340,17 +355,19 @@ async function generateAIName(
   parts: Array<{ role: string; text: string }>,
   model: any,
   ctx: ExtensionContext,
+  config: AutonameConfig,
+  ticketPrefix?: string,
 ): Promise<string | undefined> {
   const modelId = model?.provider + "/" + model?.id;
   debugLog("generateAIName with model:", modelId, "dialogue parts:", parts.length);
 
-  const locale = process.env.PI_LOCALE?.trim() || process.env.LC_ALL?.trim() || process.env.LANG?.trim() || "";
-  const promptText = buildNamingPrompt(parts, locale).join("\n");
+  const locale = process.env.PI_LOCALE || process.env.LC_ALL || process.env.LANG || "";
+  const promptText = buildNamingPrompt(parts, locale, config, ticketPrefix).join("\n");
 
   const response = await callModelWithTimeout(model, promptText, ctx);
   if (!response) return undefined;
 
-  return extractCleanName(response);
+  return extractCleanName(response, config.maxNameLength);
 }
 
 /**
@@ -424,6 +441,8 @@ async function tryNamingWithModels(
   parts: Array<{ role: string; text: string }>,
   models: any[],
   ctx: ExtensionContext,
+  config: AutonameConfig,
+  ticketPrefix: string | undefined,
   applyFn: (name: string, source: NamingSource) => boolean,
 ): Promise<{ ok: boolean; source: NamingSource | false } | undefined> {
   for (let i = 0; i < models.length; i++) {
@@ -431,7 +450,7 @@ async function tryNamingWithModels(
     debugLog(`trying model ${i + 1}/${models.length}:`, model.provider + "/" + model.id);
 
     try {
-      const aiName = await generateAIName(parts, model, ctx);
+      const aiName = await generateAIName(parts, model, ctx, config, ticketPrefix);
       debugLog("AI response:", aiName);
       if (aiName?.trim()) {
         debugLog("setting session name to:", aiName.trim());
@@ -451,6 +470,7 @@ async function tryNamingWithModels(
  */
 function tryFallbackNaming(
   parts: Array<{ role: string; text: string }>,
+  config: AutonameConfig,
   applyFn: (name: string, source: NamingSource) => boolean,
 ): { ok: boolean; source: NamingSource | false } | undefined {
   const userText = parts.find((p) => p.role === "user")?.text;
@@ -465,7 +485,7 @@ function tryFallbackNaming(
   const fb = smartFallbackName(safeUserText.text);
   debugLog("fallback name generated:", fb);
 
-  if (!isHighQualityName(fb)) {
+  if (!isHighQualityName(fb, config.maxNameLength)) {
     debugLog("fallback name rejected by quality check:", fb);
     return undefined;
   }
@@ -490,6 +510,10 @@ async function maybeAutoname(
   }
 
   const models = buildModelChain(config, ctx);
+  if (models.length === 0) {
+    debugLog("no models available");
+    return { ok: false, source: false };
+  }
 
   const branch = ctx.sessionManager.getBranch();
   const parts = extractDialogueParts(branch, mode);
@@ -498,25 +522,26 @@ async function maybeAutoname(
     return { ok: false, source: false };
   }
 
+  const ticketPrefix = extractTicketPrefix(parts, config.ticketPattern);
   const applyName = (name: string, source: NamingSource): boolean => {
     if (requestId !== namingSequence) {
       debugLog("skip stale naming result:", name);
       return false;
     }
-    const trimmed = name.trim();
+    const trimmed = withTicketPrefix(name.trim(), ticketPrefix);
     pi.setSessionName(trimmed);
     rememberGeneratedName(pi, trimmed, source);
     return true;
   };
 
   // Try AI naming
-  const aiResult = await tryNamingWithModels(parts, models, ctx, applyName);
+  const aiResult = await tryNamingWithModels(parts, models, ctx, config, ticketPrefix, applyName);
   if (aiResult) return aiResult;
 
   debugLog("all models failed, using smart fallback");
 
   // Try fallback
-  const fallbackResult = tryFallbackNaming(parts, applyName);
+  const fallbackResult = tryFallbackNaming(parts, config, applyName);
   if (fallbackResult) return fallbackResult;
 
   return { ok: false, source: false };
@@ -534,7 +559,6 @@ export default function extension(pi: ExtensionAPI) {
   /** Last rename timestamp */
   let lastRenameTime = 0;
   let lastGeneratedName: string | undefined;
-  let lastObservedName: string | undefined;
 
   loadConfig();
 
@@ -571,7 +595,6 @@ export default function extension(pi: ExtensionAPI) {
       lastGeneratedName = undefined;
       lastRenameTime = 0; // will be set below
     }
-    lastObservedName = existing;
     debugLog(
       "session_start: namingState=", namingState,
       "lastGeneratedName=", lastGeneratedName,
@@ -596,8 +619,12 @@ export default function extension(pi: ExtensionAPI) {
     // periodic rename gives the user a full `cooldownMinutes` grace
     // period before considering overwriting their choice.
     const currentName = pi.getSessionName();
-    if (currentName && currentName !== lastObservedName) {
-      debugLog("user rename detected:", lastObservedName, "→", currentName, "→ resetting cooldown");
+    if (
+      currentName &&
+      lastGeneratedName !== undefined &&
+      currentName !== lastGeneratedName
+    ) {
+      debugLog("user rename detected:", lastGeneratedName, "→", currentName, "→ resetting cooldown");
       lastRenameTime = now;
       pi.appendEntry(STATE_ENTRY_TYPE, {
         event: "user_rename",
@@ -605,13 +632,10 @@ export default function extension(pi: ExtensionAPI) {
         timestamp: now,
       });
       lastGeneratedName = currentName;
-    }
-    lastObservedName = currentName;
-
-    const currentMarker = getLastRenameMarker(ctx);
-    if (!shouldRunAutomaticRename(currentConfig.respectManualName ?? false, currentMarker?.kind)) {
-      debugLog("respectManualName: skipping automatic rename for user name");
-      return;
+    } else if (currentName) {
+      // Track the name we just observed so a future change is detectable
+      // even if `lastGeneratedName` was undefined at session_start.
+      lastGeneratedName = currentName;
     }
 
     const timeSinceLastRename = now - lastRenameTime;
@@ -630,7 +654,6 @@ export default function extension(pi: ExtensionAPI) {
       if (result.ok) {
         namingState = result.source === "ai" ? "named" : "fallback";
         lastGeneratedName = pi.getSessionName();
-        lastObservedName = lastGeneratedName;
         lastRenameTime = now;
       }
       return;
@@ -653,11 +676,9 @@ export default function extension(pi: ExtensionAPI) {
     if (newName && newName !== currentName) {
       debugLog("name updated:", currentName, "->", newName);
       lastGeneratedName = newName;
-      lastObservedName = newName;
     } else {
       debugLog("name unchanged, resetting cooldown");
       lastGeneratedName = newName ?? lastGeneratedName;
-      lastObservedName = newName ?? lastObservedName;
     }
     lastRenameTime = now;
   });
@@ -676,7 +697,6 @@ export default function extension(pi: ExtensionAPI) {
         }
         namingState = result.source === "ai" ? "named" : "fallback";
         lastGeneratedName = current;
-        lastObservedName = current;
         lastRenameTime = Date.now();
       } else {
         debugLog("/autoname: naming failed");

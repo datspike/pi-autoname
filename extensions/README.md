@@ -31,14 +31,15 @@ export default function extension(pi: ExtensionAPI): void
 纯函数：
 - `normalizeConfig(input)` — 配置规范化
 - `redactSensitiveText(text)` — 敏感信息脱敏
-- `isHighQualityName(name)` — 名称质量检查
+- `isHighQualityName(name, maxNameLength?)` — 名称质量检查
 - `blockText(content)` — 从消息 content 抽纯文本
 - `smartFallbackName(text)` — 降级命名生成
 - `parseRenameMarker(data)` — 解析 `pi-autoname-state` entry 的 marker
+- `extractTicketPrefix(parts, ticketPattern)` / `withTicketPrefix(name, ticketPrefix)` — 可配置工单前缀提取与去重
 - `getFirstDialogue(branch)` / `getRecentDialogue(branch)` — 对话提取
 - `shouldRunAutomaticRename(respectManualName, currentNameKind)` — 根据 `respectManualName` 和当前名称标记判断是否允许自动重命名；启用该策略时，跳过带有 `user_rename` 标记的名称。
 
-常量：`DEFAULT_CONFIG`、`MIN_NAME_LENGTH`、`MAX_NAME_LENGTH`、`RAW_SLICE_RE`、`SENTENCE_END_RE`、`MIN_COOLDOWN_MINUTES`、`MAX_COOLDOWN_MINUTES`、`SENSITIVE_PATTERNS`
+常量：`DEFAULT_CONFIG`、`MIN_NAME_LENGTH`、`MAX_NAME_LENGTH`、`MIN_CONFIG_NAME_LENGTH`、`MAX_CONFIG_NAME_LENGTH`、`RAW_SLICE_RE`、`SENTENCE_END_RE`、`MIN_COOLDOWN_MINUTES`、`MAX_COOLDOWN_MINUTES`、`SENSITIVE_PATTERNS`
 
 类型：`AutonameConfig`、`RenameMarker`
 
