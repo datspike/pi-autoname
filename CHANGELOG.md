@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Configurable naming preferences via `maxNameLength`, `promptExtra`, and optional `ticketPattern` prefix extraction.
+
+### Fixed
+
+- Accept Unicode letter/number session names so locale-generated names are not limited to CJK and English.
+
 ## [0.6.5] - 2026-06-18
 
 ### Added
