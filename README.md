@@ -43,6 +43,7 @@ Config file is **auto-generated** on first use at `~/.pi/agent/pi-autoname.json`
   "fallbackModels": [],
   "cooldownMinutes": 10,
   "debug": false,
+  "locale": "",
   "maxNameLength": 30,
   "promptExtra": "",
   "ticketPattern": "",
@@ -57,6 +58,7 @@ Config file is **auto-generated** on first use at `~/.pi/agent/pi-autoname.json`
 | `fallbackModels` | string[] | `[]` | Additional models to try if primary fails |
 | `cooldownMinutes` | number | `10` | Minutes between periodic re-names |
 | `debug` | boolean | `false` | Enable debug logging |
+| `locale` | string | `""` | Naming locale override. Empty = auto-detect from `PI_LOCALE` > `LC_ALL` > `LANG` |
 | `maxNameLength` | number | `30` | Max accepted generated name length. Clamped to `3..120` |
 | `promptExtra` | string | `""` | Extra instruction appended to the naming prompt |
 | `ticketPattern` | string | `""` | Optional regex. First capture group, or the full match, is forced as the generated name prefix |
@@ -160,7 +162,7 @@ When you `/name` a session, pi-autoname detects the out-of-band change on the ne
 
 ## 🌍 Locale support
 
-Auto-detected from system environment (`PI_LOCALE` > `LC_ALL` > `LANG`). Names are generated in the detected language.
+Auto-detected from system environment (`PI_LOCALE` > `LC_ALL` > `LANG`) unless `locale` is set in `pi-autoname.json`. The config value takes priority, so naming language does not depend on the shell locale.
 
 ## 🔗 Related
 

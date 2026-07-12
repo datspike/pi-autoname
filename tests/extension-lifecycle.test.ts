@@ -107,12 +107,41 @@ describe("extensions/index.ts lifecycle", () => {
     } else {
       process.env.HOME = originalHome;
     }
+    vi.unstubAllEnvs();
     await fs.rm(tempHome, { recursive: true, force: true });
   });
 
   it("root index.ts default export is the extension factory (entry smoke)", async () => {
     const mod = await loadExtensionModule(tempHome);
     expect(typeof mod.default).toBe("function");
+  });
+
+  it("prefers configured locale over an English LANG environment", async () => {
+    vi.stubEnv("LANG", "en_US.UTF-8");
+    await fs.mkdir(path.join(tempHome, ".pi", "agent"), { recursive: true });
+    await fs.writeFile(
+      path.join(tempHome, ".pi", "agent", "pi-autoname.json"),
+      JSON.stringify({ enabled: true, locale: "ru_RU.UTF-8" }),
+      "utf-8",
+    );
+    completeMock.mockResolvedValue({
+      content: [{ type: "text", text: "Обновление Telegram в системе" }],
+      stopReason: "stop",
+      errorMessage: undefined,
+    });
+
+    const branch = [message("user", "обнови телеграм"), message("assistant", "обновляю")];
+    const pi = createFakePi(branch);
+    const ctx = createContext(branch);
+    const { default: extension } = await loadExtensionModule(tempHome);
+
+    extension(pi as any);
+    await pi._getHandler("session_start")({}, ctx);
+    await pi._getHandler("agent_end")({}, ctx);
+
+    const prompt = completeMock.mock.calls[0][1].messages[0].content[0].text;
+    expect(prompt).toContain("locale: ru_RU.UTF-8");
+    expect(prompt).not.toContain("Output in English");
   });
 
   it("does not surface session file diagnostics when debug is off", async () => {

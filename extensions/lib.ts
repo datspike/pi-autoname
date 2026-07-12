@@ -37,6 +37,8 @@ export interface AutonameConfig {
   fallbackModels?: string[];
   cooldownMinutes?: number;
   debug?: boolean;
+  /** Локаль для названия. Пустая строка включает PI_LOCALE, LC_ALL или LANG. */
+  locale?: string;
   /** Max accepted generated name length, in characters. */
   maxNameLength?: number;
   /** Extra instruction appended to the naming prompt. */
@@ -64,6 +66,7 @@ export const DEFAULT_CONFIG: Required<AutonameConfig> = {
   fallbackModels: [],
   cooldownMinutes: 10,
   debug: false,
+  locale: "",
   maxNameLength: MAX_NAME_LENGTH,
   promptExtra: "",
   ticketPattern: "",
@@ -94,6 +97,7 @@ export function normalizeConfig(input: unknown): AutonameConfig {
       : [...DEFAULT_CONFIG.fallbackModels],
     cooldownMinutes: cooldown,
     debug: typeof raw.debug === "boolean" ? raw.debug : DEFAULT_CONFIG.debug,
+    locale: typeof raw.locale === "string" ? raw.locale.trim() : DEFAULT_CONFIG.locale,
     maxNameLength,
     promptExtra: typeof raw.promptExtra === "string" ? raw.promptExtra.trim() : DEFAULT_CONFIG.promptExtra,
     ticketPattern: typeof raw.ticketPattern === "string" ? raw.ticketPattern.trim() : DEFAULT_CONFIG.ticketPattern,

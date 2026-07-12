@@ -36,6 +36,7 @@ describe("normalizeConfig", () => {
       fallbackModels: ["anthropic/claude-3"],
       cooldownMinutes: 5,
       debug: true,
+      locale: "  ru_RU.UTF-8  ",
       maxNameLength: 80,
       promptExtra: "  Prefer work-ticket prefixes  ",
       ticketPattern: "  \\b([A-Z]+-\\d+)\\b  ",
@@ -46,6 +47,7 @@ describe("normalizeConfig", () => {
     expect(result.fallbackModels).toEqual(["anthropic/claude-3"]);
     expect(result.cooldownMinutes).toBe(5);
     expect(result.debug).toBe(true);
+    expect(result.locale).toBe("ru_RU.UTF-8");
     expect(result.maxNameLength).toBe(80);
     expect(result.promptExtra).toBe("Prefer work-ticket prefixes");
     expect(result.ticketPattern).toBe("\\b([A-Z]+-\\d+)\\b");
@@ -94,9 +96,10 @@ describe("normalizeConfig", () => {
   });
 
   it("uses default for wrong types", () => {
-    const result = normalizeConfig({ enabled: "yes", debug: 1, maxNameLength: "80", promptExtra: 123, ticketPattern: 456, respectManualName: "true" });
+    const result = normalizeConfig({ enabled: "yes", debug: 1, locale: 123, maxNameLength: "80", promptExtra: 123, ticketPattern: 456, respectManualName: "true" });
     expect(result.enabled).toBe(DEFAULT_CONFIG.enabled);
     expect(result.debug).toBe(DEFAULT_CONFIG.debug);
+    expect(result.locale).toBe(DEFAULT_CONFIG.locale);
     expect(result.maxNameLength).toBe(DEFAULT_CONFIG.maxNameLength);
     expect(result.promptExtra).toBe(DEFAULT_CONFIG.promptExtra);
     expect(result.ticketPattern).toBe(DEFAULT_CONFIG.ticketPattern);
