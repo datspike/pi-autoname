@@ -22,7 +22,7 @@
 | Conversation continues | Silently re-names every 10 minutes (configurable) |
 | Session topic drifts | Name updates to reflect the new focus |
 | Run `/autoname` | Manually regenerate from recent context |
-| AI naming fails | Falls back to smart text extraction (up to 30 characters) |
+| AI naming fails | Falls back to smart text extraction |
 
 ## 🚀 Install
 
@@ -31,15 +31,6 @@ pi install npm:pi-autoname
 ```
 
 **Works out of the box.** No configuration needed — uses your current session's model by default.
-
-### Pi compatibility
-
-The published package requires Pi API packages in the tested range `>=0.79.10 <0.82.0`:
-
-- `@earendil-works/pi-ai` `>=0.79.10 <0.82.0`
-- `@earendil-works/pi-coding-agent` `>=0.79.10 <0.82.0`
-
-CI checks the minimum supported version (`0.79.10`) directly from the lockfile. Versions below `0.79.10` and future major/minor versions outside the upper bound are intentionally rejected by npm.
 
 ## ⚙️ Configuration
 
@@ -52,6 +43,7 @@ Config file is **auto-generated** on first use at `~/.pi/agent/pi-autoname.json`
   "fallbackModels": [],
   "cooldownMinutes": 10,
   "debug": false,
+  "locale": "",
   "maxNameLength": 30,
   "promptExtra": "",
   "ticketPattern": "",
@@ -66,6 +58,7 @@ Config file is **auto-generated** on first use at `~/.pi/agent/pi-autoname.json`
 | `fallbackModels` | string[] | `[]` | Additional models to try if primary fails |
 | `cooldownMinutes` | number | `10` | Minutes between periodic re-names |
 | `debug` | boolean | `false` | Enable debug logging |
+| `locale` | string | `""` | Naming locale override. Empty = auto-detect from `PI_LOCALE` > `LC_ALL` > `LANG` |
 | `maxNameLength` | number | `30` | Max accepted generated name length. Clamped to `3..120` |
 | `promptExtra` | string | `""` | Extra instruction appended to the naming prompt |
 | `ticketPattern` | string | `""` | Optional regex. First capture group, or the full match, is forced as the generated name prefix |
@@ -169,7 +162,7 @@ When you `/name` a session, pi-autoname detects the out-of-band change on the ne
 
 ## 🌍 Locale support
 
-The language is detected from the first non-empty system variable in this order: `PI_LOCALE` → `LC_ALL` → `LANG`. The prompt currently has explicit instructions for Chinese (`zh`), Japanese (`ja`), Korean (`ko`), and Russian (`ru`) locales. Unknown or unsupported locales use English as the prompt fallback, while valid generated names are accepted from any Unicode writing system.
+Auto-detected from system environment (`PI_LOCALE` > `LC_ALL` > `LANG`) unless `locale` is set in `pi-autoname.json`. The config value takes priority, so naming language does not depend on the shell locale.
 
 ## 🔗 Related
 

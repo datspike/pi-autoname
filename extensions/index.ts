@@ -361,7 +361,7 @@ async function generateAIName(
   const modelId = model?.provider + "/" + model?.id;
   debugLog("generateAIName with model:", modelId, "dialogue parts:", parts.length);
 
-  const locale = process.env.PI_LOCALE || process.env.LC_ALL || process.env.LANG || "";
+  const locale = config.locale || process.env.PI_LOCALE || process.env.LC_ALL || process.env.LANG || "";
   const promptText = buildNamingPrompt(parts, locale, config, ticketPrefix).join("\n");
 
   const response = await callModelWithTimeout(model, promptText, ctx);
