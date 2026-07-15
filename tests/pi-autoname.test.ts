@@ -229,6 +229,36 @@ describe("ticket prefix helpers", () => {
     expect(extractTicketPrefix(parts, "\\b([A-Z]+-\\d+)\\b")).toBe("ABC-123");
   });
 
+  it("ignores ticket-like values from assistant messages", () => {
+    expect(
+      extractTicketPrefix(
+        [
+          { role: "user", text: "Изучи наше расширение" },
+          { role: "assistant", text: "Сравним DVR-12665 и DVR-12801" },
+        ],
+        "\\b([A-Z]+-\\d+)\\b",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined when user context contains different tickets", () => {
+    expect(
+      extractTicketPrefix(
+        [{ role: "user", text: "Сравни DVR-12665 и DVR-12801" }],
+        "\\b([A-Z]+-\\d+)\\b",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("deduplicates repeated mentions of the same user ticket", () => {
+    expect(
+      extractTicketPrefix(
+        [{ role: "user", text: "DVR-12665 соответствует ссылке /browse/DVR-12665" }],
+        "\\b([A-Z]+-\\d+)\\b",
+      ),
+    ).toBe("DVR-12665");
+  });
+
   it("returns undefined for missing or invalid ticketPattern", () => {
     expect(extractTicketPrefix(parts, "")).toBeUndefined();
     expect(extractTicketPrefix(parts, "[")).toBeUndefined();

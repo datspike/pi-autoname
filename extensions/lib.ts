@@ -137,14 +137,27 @@ export function compileTicketPattern(pattern: string | undefined): RegExp | unde
   }
 }
 
+/** Возвращает единственный тикет только из пользовательских сообщений. */
 export function extractTicketPrefix(
   parts: Array<{ role: string; text: string }>,
   ticketPattern: string | undefined,
 ): string | undefined {
   const pattern = compileTicketPattern(ticketPattern);
   if (!pattern) return undefined;
-  const match = parts.map((part) => part.text).join("\n").match(pattern);
-  return (match?.[1] ?? match?.[0])?.trim();
+
+  const candidates = new Set<string>();
+  const globalPattern = new RegExp(pattern.source, `${pattern.flags}g`);
+  const userText = parts
+    .filter((part) => part.role === "user")
+    .map((part) => part.text)
+    .join("\n");
+
+  for (const match of userText.matchAll(globalPattern)) {
+    const candidate = (match[1] ?? match[0])?.trim();
+    if (candidate) candidates.add(candidate.toUpperCase());
+  }
+
+  return candidates.size === 1 ? candidates.values().next().value : undefined;
 }
 
 function escapeRegExp(value: string): string {

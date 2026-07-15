@@ -539,7 +539,9 @@ async function maybeAutoname(
     return { ok: false, source: false };
   }
 
-  const ticketPrefix = rememberedTicketPrefix ?? extractTicketPrefix(parts, config.ticketPattern);
+  const ticketPrefix =
+    rememberedTicketPrefix ??
+    (mode === "first-dialogue" ? extractTicketPrefix(parts, config.ticketPattern) : undefined);
   const applyName = (name: string, source: NamingSource): boolean => {
     if (requestId !== namingSequence) {
       debugLog("skip stale naming result:", name);
@@ -586,10 +588,6 @@ export default function extension(pi: ExtensionAPI) {
     const existing = pi.getSessionName();
     const marker = getLastRenameMarker(ctx);
     const sessionFileDiagnostics = _debugEnabled ? readSessionFileDiagnostics(ctx.sessionManager.getSessionFile?.()) : undefined;
-    const configuredTicketPattern = loadConfig().ticketPattern;
-    const ticketFromExistingName = existing
-      ? extractTicketPrefix([{ role: "session", text: existing }], configuredTicketPattern)
-      : undefined;
 
     debugLog("session_start: existing=", existing, "marker=", marker, "sessionFileDiagnostics=", sessionFileDiagnostics);
 
@@ -606,7 +604,7 @@ export default function extension(pi: ExtensionAPI) {
       namingState = "named";
       lastGeneratedName = existing;
       lastRenameTime = marker.timestamp;
-      sessionTicketPrefix = marker.ticketPrefix ?? ticketFromExistingName;
+      sessionTicketPrefix = marker.ticketPrefix;
     } else if (
       existing &&
       (marker?.kind === "ai" || marker?.kind === "fallback") &&
@@ -615,12 +613,12 @@ export default function extension(pi: ExtensionAPI) {
       namingState = marker.source === "ai" ? "named" : "fallback";
       lastGeneratedName = existing;
       lastRenameTime = marker.timestamp;
-      sessionTicketPrefix = marker.ticketPrefix ?? ticketFromExistingName;
+      sessionTicketPrefix = marker.ticketPrefix;
     } else {
       namingState = "unnamed";
       lastGeneratedName = undefined;
       lastRenameTime = 0; // will be set below
-      sessionTicketPrefix = ticketFromExistingName;
+      sessionTicketPrefix = undefined;
     }
     debugLog(
       "session_start: namingState=", namingState,
