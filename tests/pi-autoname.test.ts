@@ -432,6 +432,23 @@ describe("parseRenameMarker", () => {
     expect(marker?.kind).toBe("fallback");
   });
 
+  it("сохраняет ticketPrefix из маркера автоматического имени", () => {
+    const marker = parseRenameMarker({
+      name: "DVR-12665 Проверка ревью",
+      source: "ai",
+      ticketPrefix: "DVR-12665",
+      timestamp: 1700000000002,
+    });
+
+    expect(marker).toEqual({
+      kind: "ai",
+      name: "DVR-12665 Проверка ревью",
+      source: "ai",
+      ticketPrefix: "DVR-12665",
+      timestamp: 1700000000002,
+    });
+  });
+
   it("parses a user_rename marker (recorded by agent_end)", () => {
     const marker = parseRenameMarker({
       event: "user_rename",

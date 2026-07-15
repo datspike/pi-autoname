@@ -37,6 +37,12 @@ type NamingState = "unnamed" | "named" | "fallback";
 /** Source of a generated name, persisted in `pi-autoname-state` entries. */
 type NamingSource = "ai" | "fallback";
 
+interface NamingResult {
+  ok: boolean;
+  source: NamingSource | false;
+  ticketPrefix?: string;
+}
+
 /**
  * Single debug switch: when `debug: true` in the config file, all
  * `debugLog` calls are emitted to stderr. When `false` (the default),
@@ -172,8 +178,18 @@ function getLastRenameMarker(ctx: ExtensionContext): RenameMarker | undefined {
   return marker;
 }
 
-function rememberGeneratedName(pi: ExtensionAPI, name: string, source: NamingSource) {
-  pi.appendEntry(STATE_ENTRY_TYPE, { name, source, timestamp: Date.now() });
+function rememberGeneratedName(
+  pi: ExtensionAPI,
+  name: string,
+  source: NamingSource,
+  ticketPrefix: string | undefined,
+) {
+  pi.appendEntry(STATE_ENTRY_TYPE, {
+    name,
+    source,
+    timestamp: Date.now(),
+    ...(ticketPrefix ? { ticketPrefix } : {}),
+  });
 }
 
 const SYSTEM_PROMPT =
@@ -499,7 +515,8 @@ async function maybeAutoname(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   mode: "first-dialogue" | "manual",
-): Promise<{ ok: boolean; source: NamingSource | false }> {
+  rememberedTicketPrefix?: string,
+): Promise<NamingResult> {
   const requestId = ++namingSequence;
   debugLog("maybeAutoname called, mode:", mode, "requestId:", requestId);
 
@@ -522,7 +539,7 @@ async function maybeAutoname(
     return { ok: false, source: false };
   }
 
-  const ticketPrefix = extractTicketPrefix(parts, config.ticketPattern);
+  const ticketPrefix = rememberedTicketPrefix ?? extractTicketPrefix(parts, config.ticketPattern);
   const applyName = (name: string, source: NamingSource): boolean => {
     if (requestId !== namingSequence) {
       debugLog("skip stale naming result:", name);
@@ -530,19 +547,21 @@ async function maybeAutoname(
     }
     const trimmed = withTicketPrefix(name.trim(), ticketPrefix);
     pi.setSessionName(trimmed);
-    rememberGeneratedName(pi, trimmed, source);
+    rememberGeneratedName(pi, trimmed, source, ticketPrefix);
     return true;
   };
 
   // Try AI naming
   const aiResult = await tryNamingWithModels(parts, models, ctx, config, ticketPrefix, applyName);
-  if (aiResult) return aiResult;
+  if (aiResult) return { ...aiResult, ...(aiResult.ok && ticketPrefix ? { ticketPrefix } : {}) };
 
   debugLog("all models failed, using smart fallback");
 
   // Try fallback
   const fallbackResult = tryFallbackNaming(parts, config, applyName);
-  if (fallbackResult) return fallbackResult;
+  if (fallbackResult) {
+    return { ...fallbackResult, ...(fallbackResult.ok && ticketPrefix ? { ticketPrefix } : {}) };
+  }
 
   return { ok: false, source: false };
 }
@@ -559,6 +578,7 @@ export default function extension(pi: ExtensionAPI) {
   /** Last rename timestamp */
   let lastRenameTime = 0;
   let lastGeneratedName: string | undefined;
+  let sessionTicketPrefix: string | undefined;
 
   loadConfig();
 
@@ -566,6 +586,10 @@ export default function extension(pi: ExtensionAPI) {
     const existing = pi.getSessionName();
     const marker = getLastRenameMarker(ctx);
     const sessionFileDiagnostics = _debugEnabled ? readSessionFileDiagnostics(ctx.sessionManager.getSessionFile?.()) : undefined;
+    const configuredTicketPattern = loadConfig().ticketPattern;
+    const ticketFromExistingName = existing
+      ? extractTicketPrefix([{ role: "session", text: existing }], configuredTicketPattern)
+      : undefined;
 
     debugLog("session_start: existing=", existing, "marker=", marker, "sessionFileDiagnostics=", sessionFileDiagnostics);
 
@@ -582,6 +606,7 @@ export default function extension(pi: ExtensionAPI) {
       namingState = "named";
       lastGeneratedName = existing;
       lastRenameTime = marker.timestamp;
+      sessionTicketPrefix = marker.ticketPrefix ?? ticketFromExistingName;
     } else if (
       existing &&
       (marker?.kind === "ai" || marker?.kind === "fallback") &&
@@ -590,10 +615,12 @@ export default function extension(pi: ExtensionAPI) {
       namingState = marker.source === "ai" ? "named" : "fallback";
       lastGeneratedName = existing;
       lastRenameTime = marker.timestamp;
+      sessionTicketPrefix = marker.ticketPrefix ?? ticketFromExistingName;
     } else {
       namingState = "unnamed";
       lastGeneratedName = undefined;
       lastRenameTime = 0; // will be set below
+      sessionTicketPrefix = ticketFromExistingName;
     }
     debugLog(
       "session_start: namingState=", namingState,
@@ -630,6 +657,7 @@ export default function extension(pi: ExtensionAPI) {
         event: "user_rename",
         name: currentName,
         timestamp: now,
+        ...(sessionTicketPrefix ? { ticketPrefix: sessionTicketPrefix } : {}),
       });
       lastGeneratedName = currentName;
     } else if (currentName) {
@@ -649,11 +677,12 @@ export default function extension(pi: ExtensionAPI) {
     // First dialogue (or retry after a low-quality fallback): try once.
     if (namingState === "unnamed" || namingState === "fallback") {
       debugLog("agent_end: triggering first-dialogue naming");
-      const result = await maybeAutoname(pi, ctx, "first-dialogue");
+      const result = await maybeAutoname(pi, ctx, "first-dialogue", sessionTicketPrefix);
       debugLog("first-dialogue result:", result);
       if (result.ok) {
         namingState = result.source === "ai" ? "named" : "fallback";
         lastGeneratedName = pi.getSessionName();
+        sessionTicketPrefix = result.ticketPrefix ?? sessionTicketPrefix;
         lastRenameTime = now;
       }
       return;
@@ -665,13 +694,14 @@ export default function extension(pi: ExtensionAPI) {
       return;
     }
     debugLog("cooldown passed, trying periodic rename");
-    const result = await maybeAutoname(pi, ctx, "manual");
+    const result = await maybeAutoname(pi, ctx, "manual", sessionTicketPrefix);
 
     if (!result.ok) {
       debugLog("periodic rename failed (all models + fallback failed)");
       return;
     }
 
+    sessionTicketPrefix = result.ticketPrefix ?? sessionTicketPrefix;
     const newName = pi.getSessionName();
     if (newName && newName !== currentName) {
       debugLog("name updated:", currentName, "->", newName);
@@ -687,7 +717,7 @@ export default function extension(pi: ExtensionAPI) {
     description: "AI-generate a session name from the current conversation context",
     handler: async (_args, ctx) => {
       debugLog("/autoname command invoked");
-      const result = await maybeAutoname(pi, ctx, "manual");
+      const result = await maybeAutoname(pi, ctx, "manual", sessionTicketPrefix);
       const current = pi.getSessionName();
       if (result.ok && current) {
         if (result.source === "ai") {
@@ -697,6 +727,7 @@ export default function extension(pi: ExtensionAPI) {
         }
         namingState = result.source === "ai" ? "named" : "fallback";
         lastGeneratedName = current;
+        sessionTicketPrefix = result.ticketPrefix ?? sessionTicketPrefix;
         lastRenameTime = Date.now();
       } else {
         debugLog("/autoname: naming failed");

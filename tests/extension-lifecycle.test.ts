@@ -362,4 +362,63 @@ describe("extensions/index.ts lifecycle", () => {
       data: { name: "新的会话标题", source: "ai" },
     });
   });
+
+  it("сохраняет тикет из прежнего имени при периодическом переименовании", async () => {
+    vi.useFakeTimers();
+    const now = new Date("2026-06-18T12:00:00.000Z");
+    vi.setSystemTime(now);
+    await fs.mkdir(path.join(tempHome, ".pi", "agent"), { recursive: true });
+    await fs.writeFile(
+      path.join(tempHome, ".pi", "agent", "pi-autoname.json"),
+      JSON.stringify({
+        enabled: true,
+        cooldownMinutes: 10,
+        ticketPattern: "\\b([A-Z]+-\\d+)\\b",
+      }),
+      "utf-8",
+    );
+    completeMock.mockResolvedValue({
+      content: [{ type: "text", text: "Проверка черновых комментариев" }],
+      stopReason: "stop",
+      errorMessage: undefined,
+    });
+
+    const branch = [
+      message("user", "DVR-12665 проверь ревью"),
+      message("assistant", "Начинаю проверку"),
+      message("user", "Уточни первый комментарий"),
+      message("assistant", "Уточняю первый комментарий"),
+      message("user", "Проверь второй комментарий"),
+      message("assistant", "Проверяю второй комментарий"),
+      message("user", "Теперь обнови черновик"),
+      message("assistant", "Обновляю черновик без повторения номера задачи"),
+      {
+        type: "custom",
+        customType: "pi-autoname-state",
+        data: {
+          name: "DVR-12665 Старое название",
+          source: "ai",
+          timestamp: now.getTime() - 11 * 60 * 1000,
+        },
+      },
+    ];
+    const pi = createFakePi(branch, "DVR-12665 Старое название");
+    const ctx = createContext(branch);
+    const { default: extension } = await loadExtensionModule(tempHome);
+
+    extension(pi as any);
+    await pi._getHandler("session_start")({}, ctx);
+    await pi._getHandler("agent_end")({}, ctx);
+
+    expect(pi._getSessionName()).toBe("DVR-12665 Проверка черновых комментариев");
+    expect(branch.at(-1)).toMatchObject({
+      type: "custom",
+      customType: "pi-autoname-state",
+      data: {
+        name: "DVR-12665 Проверка черновых комментариев",
+        source: "ai",
+        ticketPrefix: "DVR-12665",
+      },
+    });
+  });
 });
