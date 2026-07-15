@@ -191,11 +191,11 @@ export function smartFallbackName(text: string): string {
   return s || text.slice(0, 40).replace(/\n/g, " ").trim();
 }
 
-/** A persisted pi-autoname state marker — one of three flavors. */
+/** Сохранённое состояние переименования с закреплённым тикетом сессии. */
 export type RenameMarker =
-  | { kind: "ai"; name: string; source: "ai"; timestamp: number }
-  | { kind: "fallback"; name: string; source: "fallback"; timestamp: number }
-  | { kind: "user_rename"; name: string; timestamp: number };
+  | { kind: "ai"; name: string; source: "ai"; timestamp: number; ticketPrefix?: string }
+  | { kind: "fallback"; name: string; source: "fallback"; timestamp: number; ticketPrefix?: string }
+  | { kind: "user_rename"; name: string; timestamp: number; ticketPrefix?: string };
 
 /**
  * Parse a single `pi-autoname-state` entry's `data` payload into a typed
@@ -208,6 +208,11 @@ export function parseRenameMarker(data: unknown): RenameMarker | undefined {
   if (!data || typeof data !== "object") return undefined;
   const obj = data as Record<string, unknown>;
 
+  const ticketPrefix =
+    typeof obj.ticketPrefix === "string" && obj.ticketPrefix.trim()
+      ? obj.ticketPrefix.trim()
+      : undefined;
+
   // user_rename flavor — written by agent_end when it detects a /name
   // out-of-band change.
   if (obj.event === "user_rename" && typeof obj.name === "string") {
@@ -215,6 +220,7 @@ export function parseRenameMarker(data: unknown): RenameMarker | undefined {
       kind: "user_rename",
       name: obj.name,
       timestamp: typeof obj.timestamp === "number" ? obj.timestamp : 0,
+      ...(ticketPrefix ? { ticketPrefix } : {}),
     };
   }
 
@@ -225,6 +231,7 @@ export function parseRenameMarker(data: unknown): RenameMarker | undefined {
       name: obj.name,
       source: "ai",
       timestamp: typeof obj.timestamp === "number" ? obj.timestamp : 0,
+      ...(ticketPrefix ? { ticketPrefix } : {}),
     };
   }
   if (obj.source === "fallback" && typeof obj.name === "string") {
@@ -233,6 +240,7 @@ export function parseRenameMarker(data: unknown): RenameMarker | undefined {
       name: obj.name,
       source: "fallback",
       timestamp: typeof obj.timestamp === "number" ? obj.timestamp : 0,
+      ...(ticketPrefix ? { ticketPrefix } : {}),
     };
   }
 
