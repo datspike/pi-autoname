@@ -61,7 +61,7 @@ Config file is **auto-generated** on first use at `~/.pi/agent/pi-autoname.json`
 | `locale` | string | `""` | Naming locale override. Empty = auto-detect from `PI_LOCALE` > `LC_ALL` > `LANG` |
 | `maxNameLength` | number | `30` | Max accepted generated name length. Clamped to `3..120` |
 | `promptExtra` | string | `""` | Extra instruction appended to the naming prompt |
-| `ticketPattern` | string | `""` | Optional regex. First capture group, or the full match, is pinned to the session and forced as the prefix of later generated names |
+| `ticketPattern` | string | `""` | Optional regex. Exactly one unique match in the first user message is pinned and forced as the prefix of later generated names |
 | `respectManualName` | boolean | `false` | When `false` (default), pi-autoname owns session naming: automatic naming runs on first dialogue and periodically, and may overwrite a name set via `/name` or `/autoname`. Set to `true` for the legacy behavior of treating a user-issued rename as sticky. |
 
 ### Example: Model fallback chain
@@ -85,11 +85,11 @@ This tries models in order: `MiniMax-M2.7` → `mimo-v2-omni` → session model.
 {
   "maxNameLength": 80,
   "promptExtra": "Prefer longer, descriptive names. If a task ticket is present, keep it at the beginning.",
-  "ticketPattern": "\\b([A-Z]+-\\d+)\\b"
+  "ticketPattern": "\\b((?:DVR|OST|ZATO)-\\d+)\\b"
 }
 ```
 
-When `ticketPattern` first matches conversation context or an existing session name, pi-autoname stores the first capture group (or the full match) in `pi-autoname-state`. Later periodic and `/autoname` renames keep that ticket prefix even after it leaves the recent conversation window.
+pi-autoname checks only the first user message and pins the ticket only when the configured pattern produces exactly one unique value. Assistant replies, later dialogue, and an existing session name are not ticket sources. Periodic and `/autoname` renames retain a safely pinned ticket after it leaves the recent conversation window.
 
 ## 🏗️ How it works
 

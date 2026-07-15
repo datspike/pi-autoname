@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Accept Unicode letter/number session names so locale-generated names are not limited to CJK and English.
 - Let `locale` in `pi-autoname.json` override `PI_LOCALE`, `LC_ALL`, and `LANG`, avoiding conflicting language instructions.
-- Persist the detected task ticket in session state so periodic and manual AI renames retain its prefix after it leaves recent conversation context.
+- Persist a single unambiguous task ticket from the first user message so later renames retain it without learning unrelated IDs from assistant replies, later discussion, or legacy session names.
 
 ## [0.6.5] - 2026-06-18
 
