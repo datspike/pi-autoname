@@ -170,6 +170,16 @@ export function withTicketPrefix(name: string, ticketPrefix: string | undefined)
   return `${ticketPrefix} ${name.replace(duplicatePrefix, "").trim()}`.trim();
 }
 
+/** Удаляет недоверенный тикет в начале имени, созданного моделью. */
+export function withoutTicketPrefix(name: string, ticketPattern: string | undefined): string {
+  const pattern = compileTicketPattern(ticketPattern);
+  if (!pattern) return name;
+
+  const match = name.match(pattern);
+  if (!match || match.index !== 0) return name;
+  return name.slice(match[0].length).replace(/^[\s:–—-]+/, "").trim();
+}
+
 export function blockText(content: any): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";

@@ -21,6 +21,7 @@ import {
   parseRenameMarker,
   extractTicketPrefix,
   withTicketPrefix,
+  withoutTicketPrefix,
   DEFAULT_CONFIG,
   type AutonameConfig,
   type RenameMarker,
@@ -245,6 +246,12 @@ function buildNamingPrompt(
   }
   if (config.promptExtra?.trim()) {
     promptParts.push("", "USER NAMING PREFERENCE:", config.promptExtra.trim());
+  }
+  if (!ticketPrefix && config.ticketPattern) {
+    promptParts.push(
+      "",
+      "TICKET RULE: Do not include ticket-like identifiers in the name because no trusted task ticket was detected.",
+    );
   }
 
   for (const part of parts) {
@@ -547,7 +554,14 @@ async function maybeAutoname(
       debugLog("skip stale naming result:", name);
       return false;
     }
-    const trimmed = withTicketPrefix(name.trim(), ticketPrefix);
+    const baseName = ticketPrefix
+      ? name.trim()
+      : withoutTicketPrefix(name.trim(), config.ticketPattern);
+    if (!baseName) {
+      debugLog("skip generated name containing only an untrusted ticket prefix");
+      return false;
+    }
+    const trimmed = withTicketPrefix(baseName, ticketPrefix);
     pi.setSessionName(trimmed);
     rememberGeneratedName(pi, trimmed, source, ticketPrefix);
     return true;
