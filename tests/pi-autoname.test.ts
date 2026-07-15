@@ -5,6 +5,7 @@ import {
   isHighQualityName,
   extractTicketPrefix,
   withTicketPrefix,
+  withoutTicketPrefix,
   blockText,
   smartFallbackName,
   getFirstDialogue,
@@ -267,6 +268,21 @@ describe("ticket prefix helpers", () => {
   it("adds ticket prefix without duplicating it", () => {
     expect(withTicketPrefix("naming config", "ABC-123")).toBe("ABC-123 naming config");
     expect(withTicketPrefix("ABC-123 naming config", "ABC-123")).toBe("ABC-123 naming config");
+  });
+
+  it("removes an untrusted generated ticket prefix", () => {
+    expect(
+      withoutTicketPrefix(
+        "DVR-12665 Проверка расширения",
+        "\\b((?:DVR|OST|ZATO)-\\d+)\\b",
+      ),
+    ).toBe("Проверка расширения");
+    expect(
+      withoutTicketPrefix(
+        "Проверка расширения",
+        "\\b((?:DVR|OST|ZATO)-\\d+)\\b",
+      ),
+    ).toBe("Проверка расширения");
   });
 });
 

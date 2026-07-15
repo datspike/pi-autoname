@@ -373,12 +373,13 @@ describe("extensions/index.ts lifecycle", () => {
       JSON.stringify({
         enabled: true,
         cooldownMinutes: 10,
+        maxNameLength: 80,
         ticketPattern: "\\b([A-Z]+-\\d+)\\b",
       }),
       "utf-8",
     );
     completeMock.mockResolvedValue({
-      content: [{ type: "text", text: "Проверка черновых комментариев" }],
+      content: [{ type: "text", text: "DVR-12665 Проверка черновых комментариев" }],
       stopReason: "stop",
       errorMessage: undefined,
     });

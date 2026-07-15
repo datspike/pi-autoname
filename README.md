@@ -84,12 +84,12 @@ This tries models in order: `MiniMax-M2.7` → `mimo-v2-omni` → session model.
 ```json
 {
   "maxNameLength": 80,
-  "promptExtra": "Prefer longer, descriptive names. If a task ticket is present, keep it at the beginning.",
+  "promptExtra": "Prefer longer, descriptive names.",
   "ticketPattern": "\\b((?:DVR|OST|ZATO)-\\d+)\\b"
 }
 ```
 
-pi-autoname checks only the first user message and pins the ticket only when the configured pattern produces exactly one unique value. Assistant replies, later dialogue, and an existing session name are not ticket sources. Periodic and `/autoname` renames retain a safely pinned ticket after it leaves the recent conversation window.
+pi-autoname checks only the first user message and pins the ticket only when the configured pattern produces exactly one unique value. Assistant replies, later dialogue, and an existing session name are not ticket sources. Periodic and `/autoname` renames retain a safely pinned ticket after it leaves the recent conversation window. When no trusted ticket is pinned, a ticket-like prefix suggested by the naming model is removed before the name is saved.
 
 ## 🏗️ How it works
 
