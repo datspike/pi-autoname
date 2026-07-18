@@ -19,6 +19,7 @@ import {
   getFirstDialogue,
   getRecentDialogue,
   parseRenameMarker,
+  shouldRunAutomaticRename,
   DEFAULT_CONFIG,
   type AutonameConfig,
   type RenameMarker,
@@ -609,6 +610,12 @@ export default function extension(pi: ExtensionAPI) {
       // Track the name we just observed so a future change is detectable
       // even if `lastGeneratedName` was undefined at session_start.
       lastGeneratedName = currentName;
+    }
+
+    const currentMarker = getLastRenameMarker(ctx);
+    if (!shouldRunAutomaticRename(currentConfig.respectManualName ?? false, currentMarker?.kind ?? "")) {
+      debugLog("respectManualName: skipping automatic rename for user name");
+      return;
     }
 
     const timeSinceLastRename = now - lastRenameTime;
