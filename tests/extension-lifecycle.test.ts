@@ -368,4 +368,39 @@ describe("extensions/index.ts lifecycle", () => {
     expect(branch).toHaveLength(3);
   });
 
+  it("preserves a manual name set before the first agent_end when respectManualName is enabled", async () => {
+    vi.useFakeTimers();
+    const now = new Date("2026-06-18T10:45:00.000Z");
+    vi.setSystemTime(now);
+    await fs.mkdir(path.join(tempHome, ".pi", "agent"), { recursive: true });
+    await fs.writeFile(
+      path.join(tempHome, ".pi", "agent", "pi-autoname.json"),
+      JSON.stringify({ enabled: true, respectManualName: true }),
+      "utf-8",
+    );
+    completeMock.mockResolvedValue({
+      content: [{ type: "text", text: "не должен быть создан" }],
+      stopReason: "stop",
+      errorMessage: undefined,
+    });
+
+    const branch = [message("user", "исправить первую генерацию имени"), message("assistant", "сначала проверю состояние")];
+    const pi = createFakePi(branch, "pi-autoname");
+    const ctx = createContext(branch);
+    const { default: extension } = await loadExtensionModule(tempHome);
+
+    extension(pi as any);
+    await pi._getHandler("session_start")({}, ctx);
+    pi.setSessionName("Моё ручное имя");
+    await pi._getHandler("agent_end")({}, ctx);
+
+    expect(completeMock).not.toHaveBeenCalled();
+    expect(pi._getSessionName()).toBe("Моё ручное имя");
+    expect(branch.at(-1)).toMatchObject({
+      type: "custom",
+      customType: "pi-autoname-state",
+      data: { event: "user_rename", name: "Моё ручное имя", timestamp: now.getTime() },
+    });
+  });
+
 });
