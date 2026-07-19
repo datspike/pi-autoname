@@ -19,6 +19,7 @@ import {
   getFirstDialogue,
   getRecentDialogue,
   parseRenameMarker,
+  shouldRunAutomaticRename,
   DEFAULT_CONFIG,
   type AutonameConfig,
   type RenameMarker,
@@ -532,6 +533,7 @@ export default function extension(pi: ExtensionAPI) {
   /** Last rename timestamp */
   let lastRenameTime = 0;
   let lastGeneratedName: string | undefined;
+  let lastObservedName: string | undefined;
 
   loadConfig();
 
@@ -568,6 +570,7 @@ export default function extension(pi: ExtensionAPI) {
       lastGeneratedName = undefined;
       lastRenameTime = 0; // will be set below
     }
+    lastObservedName = existing;
     debugLog(
       "session_start: namingState=", namingState,
       "lastGeneratedName=", lastGeneratedName,
@@ -592,12 +595,8 @@ export default function extension(pi: ExtensionAPI) {
     // periodic rename gives the user a full `cooldownMinutes` grace
     // period before considering overwriting their choice.
     const currentName = pi.getSessionName();
-    if (
-      currentName &&
-      lastGeneratedName !== undefined &&
-      currentName !== lastGeneratedName
-    ) {
-      debugLog("user rename detected:", lastGeneratedName, "→", currentName, "→ resetting cooldown");
+    if (currentName && currentName !== lastObservedName) {
+      debugLog("user rename detected:", lastObservedName, "→", currentName, "→ resetting cooldown");
       lastRenameTime = now;
       pi.appendEntry(STATE_ENTRY_TYPE, {
         event: "user_rename",
@@ -605,10 +604,13 @@ export default function extension(pi: ExtensionAPI) {
         timestamp: now,
       });
       lastGeneratedName = currentName;
-    } else if (currentName) {
-      // Track the name we just observed so a future change is detectable
-      // even if `lastGeneratedName` was undefined at session_start.
-      lastGeneratedName = currentName;
+    }
+    lastObservedName = currentName;
+
+    const currentMarker = getLastRenameMarker(ctx);
+    if (!shouldRunAutomaticRename(currentConfig.respectManualName ?? false, currentMarker?.kind)) {
+      debugLog("respectManualName: skipping automatic rename for user name");
+      return;
     }
 
     const timeSinceLastRename = now - lastRenameTime;
@@ -627,6 +629,7 @@ export default function extension(pi: ExtensionAPI) {
       if (result.ok) {
         namingState = result.source === "ai" ? "named" : "fallback";
         lastGeneratedName = pi.getSessionName();
+        lastObservedName = lastGeneratedName;
         lastRenameTime = now;
       }
       return;
@@ -649,9 +652,11 @@ export default function extension(pi: ExtensionAPI) {
     if (newName && newName !== currentName) {
       debugLog("name updated:", currentName, "->", newName);
       lastGeneratedName = newName;
+      lastObservedName = newName;
     } else {
       debugLog("name unchanged, resetting cooldown");
       lastGeneratedName = newName ?? lastGeneratedName;
+      lastObservedName = newName ?? lastObservedName;
     }
     lastRenameTime = now;
   });
@@ -670,6 +675,7 @@ export default function extension(pi: ExtensionAPI) {
         }
         namingState = result.source === "ai" ? "named" : "fallback";
         lastGeneratedName = current;
+        lastObservedName = current;
         lastRenameTime = Date.now();
       } else {
         debugLog("/autoname: naming failed");

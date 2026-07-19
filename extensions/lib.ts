@@ -188,6 +188,24 @@ export function parseRenameMarker(data: unknown): RenameMarker | undefined {
   return undefined;
 }
 
+/**
+ * Определяет, разрешено ли автоматическое переименование сессии.
+ * Когда включена политика `respectManualName`, запрещает перезапись
+ * имён с маркером `user_rename`; имена, сгенерированные расширением
+ * (kind `ai` / `fallback`), всегда разрешены к обновлению.
+ *
+ * @param respectManualName - значение одноимённого поля конфига
+ * @param currentNameKind - kind из `RenameMarker` текущего имени сессии
+ * @returns true, если автоматическое переименование разрешено
+ */
+export function shouldRunAutomaticRename(
+  respectManualName: boolean,
+  currentNameKind: RenameMarker["kind"] | undefined,
+): boolean {
+  if (!respectManualName) return true;
+  return currentNameKind !== "user_rename";
+}
+
 export function getFirstDialogue(branch: any[]) {
   let firstUser: string | undefined;
   let firstAssistant: string | undefined;
