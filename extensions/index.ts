@@ -608,7 +608,7 @@ export default function extension(pi: ExtensionAPI) {
     lastObservedName = currentName;
 
     const currentMarker = getLastRenameMarker(ctx);
-    if (!shouldRunAutomaticRename(currentConfig.respectManualName ?? false, currentMarker?.kind ?? "")) {
+    if (!shouldRunAutomaticRename(currentConfig.respectManualName ?? false, currentMarker?.kind)) {
       debugLog("respectManualName: skipping automatic rename for user name");
       return;
     }

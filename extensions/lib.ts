@@ -198,7 +198,10 @@ export function parseRenameMarker(data: unknown): RenameMarker | undefined {
  * @param currentNameKind - kind из `RenameMarker` текущего имени сессии
  * @returns true, если автоматическое переименование разрешено
  */
-export function shouldRunAutomaticRename(respectManualName: boolean, currentNameKind: RenameMarker["kind"]): boolean {
+export function shouldRunAutomaticRename(
+  respectManualName: boolean,
+  currentNameKind: RenameMarker["kind"] | undefined,
+): boolean {
   if (!respectManualName) return true;
   return currentNameKind !== "user_rename";
 }

@@ -31,6 +31,7 @@
   ],
   "scripts": {
     "test": "vitest run --pool=threads",
+    "typecheck": "tsc --noEmit",
     "test:watch": "vitest --pool=threads"
   },
   "peerDependencies": {
@@ -40,6 +41,7 @@
   "devDependencies": {
     "@earendil-works/pi-ai": "^0.79.10",
     "@earendil-works/pi-coding-agent": "^0.79.10",
+    "typescript": "^5.9.3",
     "vitest": "^4.1.0"
   },
   "pi": {
