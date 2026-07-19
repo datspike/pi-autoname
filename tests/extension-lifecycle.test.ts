@@ -56,7 +56,7 @@ function createFakePi(branch: any[], initialSessionName?: string) {
   };
 }
 
-function createContext(branch: any[], sessionFile?: string) {
+function createContext(branch: any[], sessionFile?: string, model: any = { provider: "test-provider", id: "test-model", api: "mock-api" }) {
   return {
     sessionManager: {
       getBranch: () => branch,
@@ -66,7 +66,7 @@ function createContext(branch: any[], sessionFile?: string) {
       getApiKeyAndHeaders: vi.fn(async () => ({ ok: true, apiKey: "test-key", headers: {} })),
       find: vi.fn(() => null),
     },
-    model: { provider: "test-provider", id: "test-model", api: "mock-api" },
+    model,
     signal: new AbortController().signal,
     ui: { notify: vi.fn() },
   };
@@ -246,6 +246,26 @@ describe("extensions/index.ts lifecycle", () => {
       type: "custom",
       customType: "pi-autoname-state",
       data: { name: "语义化标题", source: "ai" },
+    });
+  });
+
+  it("uses local fallback when no models are available", async () => {
+    vi.useFakeTimers();
+    const branch = [message("user", "Fix empty model chain"), message("assistant", "checking fallback")];
+    const pi = createFakePi(branch, "pi-autoname");
+    const ctx = createContext(branch, undefined, null);
+    const { default: extension } = await loadExtensionModule(tempHome);
+
+    extension(pi as any);
+    await pi._getHandler("session_start")({}, ctx);
+    await pi._getHandler("agent_end")({}, ctx);
+
+    expect(completeMock).not.toHaveBeenCalled();
+    expect(pi._getSessionName()).toBe("Fix empty model chain");
+    expect(branch.at(-1)).toMatchObject({
+      type: "custom",
+      customType: "pi-autoname-state",
+      data: { name: "Fix empty model chain", source: "fallback" },
     });
   });
 
