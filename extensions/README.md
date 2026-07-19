@@ -36,6 +36,7 @@ export default function extension(pi: ExtensionAPI): void
 - `smartFallbackName(text)` — 降级命名生成
 - `parseRenameMarker(data)` — 解析 `pi-autoname-state` entry 的 marker
 - `getFirstDialogue(branch)` / `getRecentDialogue(branch)` — 对话提取
+- `shouldRunAutomaticRename(respectManualName, currentNameKind)` — 根据 `respectManualName` 和当前名称标记判断是否允许自动重命名；启用该策略时，跳过带有 `user_rename` 标记的名称。
 
 常量：`DEFAULT_CONFIG`、`MIN_NAME_LENGTH`、`MAX_NAME_LENGTH`、`RAW_SLICE_RE`、`SENTENCE_END_RE`、`MIN_COOLDOWN_MINUTES`、`MAX_COOLDOWN_MINUTES`、`SENSITIVE_PATTERNS`
 
@@ -43,8 +44,11 @@ export default function extension(pi: ExtensionAPI): void
 
 ## 测试
 
+Проверки выполняются в следующем порядке: сначала тесты, затем проверка типов。
+
 ```bash
 npm test
+npm run typecheck
 ```
 
 测试文件位于：
