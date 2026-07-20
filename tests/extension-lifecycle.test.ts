@@ -263,16 +263,16 @@ describe("extensions/index.ts lifecycle", () => {
     });
   });
 
-  it("treats a pre-existing display name without matching marker as fresh and auto-renames after first dialogue", async () => {
+  it("устанавливает локализованное имя, полученное от модели", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-18T08:22:19.500Z"));
     completeMock.mockResolvedValue({
-      content: [{ type: "text", text: "语义化标题" }],
+      content: [{ type: "text", text: "Исправление тестов" }],
       stopReason: "stop",
       errorMessage: undefined,
     });
 
-    const branch = [message("user", "帮我排查 session 命名问题"), message("assistant", "先读代码再判断")];
+    const branch = [message("user", "проверить локаль"), message("assistant", "готово")];
     process.env.PI_LOCALE = "ru_RU.UTF-8";
     const pi = createFakePi(branch, "pi-autoname");
     const ctx = createContext(branch);
@@ -283,13 +283,11 @@ describe("extensions/index.ts lifecycle", () => {
     await pi._getHandler("agent_end")({}, ctx);
 
     expect(completeMock).toHaveBeenCalledTimes(1);
-    const prompt = completeMock.mock.calls[0]?.[1]?.messages?.[0]?.content?.[0]?.text;
-    expect(prompt).toContain("Пиши название по-русски.");
-    expect(pi._getSessionName()).toBe("语义化标题");
+    expect(pi._getSessionName()).toBe("Исправление тестов");
     expect(branch.at(-1)).toMatchObject({
       type: "custom",
       customType: "pi-autoname-state",
-      data: { name: "语义化标题", source: "ai" },
+      data: { name: "Исправление тестов", source: "ai" },
     });
   });
 

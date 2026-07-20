@@ -206,6 +206,11 @@ describe("isHighQualityName", () => {
     // but a comma in mid-phrase is allowed if the name itself is valid
     expect(isHighQualityName("修复，重构")).toBe(true);
   });
+
+  it("accepts names from localized Unicode scripts", () => {
+    expect(isHighQualityName("Исправление тестов")).toBe(true);
+    expect(isHighQualityName("إصلاح الاختبارات")).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

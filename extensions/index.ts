@@ -324,7 +324,7 @@ function extractCleanName(response: any): string | undefined {
 
   const cleaned = text
     ?.replace(/^["'`\u201c\u201d\u3001]+|["'`\u201c\u201d\u3001]+$/g, "")
-    .replace(/[^\w\u4e00-\u9fff\s\-_/.#+]/g, "")
+    .replace(/[^\p{L}\p{N}\s\-_/.#+]/gu, "")
     .trim();
 
   if (!cleaned || !isHighQualityName(cleaned)) {

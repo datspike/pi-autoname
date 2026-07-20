@@ -142,7 +142,7 @@ When you `/name` a session, pi-autoname detects the out-of-band change on the ne
 
 ## 🌍 Locale support
 
-The language is detected from the first non-empty system variable in this order: `PI_LOCALE` → `LC_ALL` → `LANG`. The prompt currently has explicit instructions for Chinese (`zh`), Japanese (`ja`), Korean (`ko`), and Russian (`ru`) locales. Unknown or unsupported locales use English as the fallback.
+The language is detected from the first non-empty system variable in this order: `PI_LOCALE` → `LC_ALL` → `LANG`. The prompt currently has explicit instructions for Chinese (`zh`), Japanese (`ja`), Korean (`ko`), and Russian (`ru`) locales. Unknown or unsupported locales use English as the prompt fallback, while valid generated names are accepted from any Unicode writing system.
 
 ## 🔗 Related
 
