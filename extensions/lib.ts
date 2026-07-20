@@ -127,11 +127,11 @@ export function smartFallbackName(text: string): string {
     .trim();
 
   const sentenceEnd = s.match(/[.!?。！？]/);
-  if (sentenceEnd && sentenceEnd.index! < 60) {
+  if (sentenceEnd && sentenceEnd.index! < MAX_NAME_LENGTH) {
     s = s.slice(0, sentenceEnd.index! + 1);
-  } else if (s.length > 45) {
-    const cut = s.lastIndexOf(" ", 45);
-    s = cut > 10 ? s.slice(0, cut) : s.slice(0, 42);
+  } else if (s.length > MAX_NAME_LENGTH) {
+    const cut = s.lastIndexOf(" ", MAX_NAME_LENGTH);
+    s = cut > 10 ? s.slice(0, cut) : s.slice(0, MAX_NAME_LENGTH);
   }
 
   s = s.replace(/(?:吗|呢|吧|啊|呀|哦|嘛|的|了|着|过)[\s,，.。]*$/, "").trim();
