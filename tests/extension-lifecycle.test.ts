@@ -134,6 +134,28 @@ describe("extensions/index.ts lifecycle", () => {
     expect(buildNamingPrompt(parts, "russian_RU.UTF-8")[0]).toBe("Output in English.");
   });
 
+  it("игнорирует пробельную PI_LOCALE и использует следующую локаль", async () => {
+    vi.useFakeTimers();
+    completeMock.mockResolvedValue({
+      content: [{ type: "text", text: "Резервная локаль" }],
+      stopReason: "stop",
+      errorMessage: undefined,
+    });
+    const branch = [message("user", "проверить резервную локаль"), message("assistant", "готово")];
+    process.env.PI_LOCALE = "   ";
+    process.env.LC_ALL = "ru_RU.UTF-8";
+    const pi = createFakePi(branch, "pi-autoname");
+    const ctx = createContext(branch);
+    const { default: extension } = await loadExtensionModule(tempHome);
+
+    extension(pi as any);
+    await pi._getHandler("session_start")({}, ctx);
+    await pi._getHandler("agent_end")({}, ctx);
+
+    const prompt = completeMock.mock.calls[0]?.[1]?.messages?.[0]?.content?.[0]?.text;
+    expect(prompt).toContain("Пиши название по-русски.");
+  });
+
   it("does not surface session file diagnostics when debug is off", async () => {
     vi.useFakeTimers();
     const now = new Date("2026-06-18T12:00:00.000Z");
