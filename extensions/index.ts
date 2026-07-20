@@ -183,17 +183,21 @@ let namingSequence = 0;
 /**
  * Build the naming prompt with locale-aware instructions and redacted dialogue.
  */
-function buildNamingPrompt(
+export function buildNamingPrompt(
   parts: Array<{ role: string; text: string }>,
   locale: string,
 ): string[] {
-  const langHint = locale.startsWith("zh")
+  const normalizedLocale = locale.trim().toLowerCase();
+  const hasLanguage = (language: string) => new RegExp(`^${language}(?:$|[_.-])`).test(normalizedLocale);
+  const langHint = hasLanguage("zh")
     ? "用中文（简体）输出名称"
-    : locale.startsWith("ja")
+    : hasLanguage("ja")
       ? "日本語で出力"
-      : locale.startsWith("ko")
+      : hasLanguage("ko")
         ? "한국어로 출력"
-        : "Output in English";
+        : hasLanguage("ru")
+          ? "Пиши название по-русски"
+          : "Output in English";
 
   const promptParts = [
     `${langHint}.`,
@@ -339,7 +343,7 @@ async function generateAIName(
   const modelId = model?.provider + "/" + model?.id;
   debugLog("generateAIName with model:", modelId, "dialogue parts:", parts.length);
 
-  const locale = process.env.PI_LOCALE || process.env.LC_ALL || process.env.LANG || "";
+  const locale = process.env.PI_LOCALE?.trim() || process.env.LC_ALL?.trim() || process.env.LANG?.trim() || "";
   const promptText = buildNamingPrompt(parts, locale).join("\n");
 
   const response = await callModelWithTimeout(model, promptText, ctx);

@@ -91,9 +91,15 @@ async function loadExtensionModule(homeDir: string) {
 describe("extensions/index.ts lifecycle", () => {
   let tempHome: string;
   let originalHome: string | undefined;
+  let originalPiLocale: string | undefined;
+  let originalLcAll: string | undefined;
+  let originalLang: string | undefined;
 
   beforeEach(async () => {
     originalHome = process.env.HOME;
+    originalPiLocale = process.env.PI_LOCALE;
+    originalLcAll = process.env.LC_ALL;
+    originalLang = process.env.LANG;
     tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "pi-autoname-ext-test-"));
     completeMock.mockReset();
     getModelMock.mockReset();
@@ -107,12 +113,47 @@ describe("extensions/index.ts lifecycle", () => {
     } else {
       process.env.HOME = originalHome;
     }
+    for (const [key, value] of Object.entries({ PI_LOCALE: originalPiLocale, LC_ALL: originalLcAll, LANG: originalLang })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     await fs.rm(tempHome, { recursive: true, force: true });
   });
 
   it("root index.ts default export is the extension factory (entry smoke)", async () => {
     const mod = await loadExtensionModule(tempHome);
     expect(typeof mod.default).toBe("function");
+  });
+
+  it("выбирает русский язык для ru-локали и английский резерв для неизвестной локали", async () => {
+    const { buildNamingPrompt } = await loadExtensionModule(tempHome);
+    const parts = [{ role: "user", text: "проверить локаль" }];
+
+    expect(buildNamingPrompt(parts, "ru_RU.UTF-8")[0]).toBe("Пиши название по-русски.");
+    expect(buildNamingPrompt(parts, "xx_XX.UTF-8")[0]).toBe("Output in English.");
+    expect(buildNamingPrompt(parts, "russian_RU.UTF-8")[0]).toBe("Output in English.");
+  });
+
+  it("игнорирует пробельную PI_LOCALE и использует следующую локаль", async () => {
+    vi.useFakeTimers();
+    completeMock.mockResolvedValue({
+      content: [{ type: "text", text: "Резервная локаль" }],
+      stopReason: "stop",
+      errorMessage: undefined,
+    });
+    const branch = [message("user", "проверить резервную локаль"), message("assistant", "готово")];
+    process.env.PI_LOCALE = "   ";
+    process.env.LC_ALL = "ru_RU.UTF-8";
+    const pi = createFakePi(branch, "pi-autoname");
+    const ctx = createContext(branch);
+    const { default: extension } = await loadExtensionModule(tempHome);
+
+    extension(pi as any);
+    await pi._getHandler("session_start")({}, ctx);
+    await pi._getHandler("agent_end")({}, ctx);
+
+    const prompt = completeMock.mock.calls[0]?.[1]?.messages?.[0]?.content?.[0]?.text;
+    expect(prompt).toContain("Пиши название по-русски.");
   });
 
   it("does not surface session file diagnostics when debug is off", async () => {
@@ -232,6 +273,7 @@ describe("extensions/index.ts lifecycle", () => {
     });
 
     const branch = [message("user", "帮我排查 session 命名问题"), message("assistant", "先读代码再判断")];
+    process.env.PI_LOCALE = "ru_RU.UTF-8";
     const pi = createFakePi(branch, "pi-autoname");
     const ctx = createContext(branch);
     const { default: extension } = await loadExtensionModule(tempHome);
@@ -241,6 +283,8 @@ describe("extensions/index.ts lifecycle", () => {
     await pi._getHandler("agent_end")({}, ctx);
 
     expect(completeMock).toHaveBeenCalledTimes(1);
+    const prompt = completeMock.mock.calls[0]?.[1]?.messages?.[0]?.content?.[0]?.text;
+    expect(prompt).toContain("Пиши название по-русски.");
     expect(pi._getSessionName()).toBe("语义化标题");
     expect(branch.at(-1)).toMatchObject({
       type: "custom",
