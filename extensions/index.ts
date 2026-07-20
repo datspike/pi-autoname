@@ -183,17 +183,20 @@ let namingSequence = 0;
 /**
  * Build the naming prompt with locale-aware instructions and redacted dialogue.
  */
-function buildNamingPrompt(
+export function buildNamingPrompt(
   parts: Array<{ role: string; text: string }>,
   locale: string,
 ): string[] {
-  const langHint = locale.startsWith("zh")
+  const normalizedLocale = locale.toLowerCase();
+  const langHint = normalizedLocale.startsWith("zh")
     ? "用中文（简体）输出名称"
-    : locale.startsWith("ja")
+    : normalizedLocale.startsWith("ja")
       ? "日本語で出力"
-      : locale.startsWith("ko")
+      : normalizedLocale.startsWith("ko")
         ? "한국어로 출력"
-        : "Output in English";
+        : normalizedLocale.startsWith("ru")
+          ? "Пиши название по-русски"
+          : "Output in English";
 
   const promptParts = [
     `${langHint}.`,
