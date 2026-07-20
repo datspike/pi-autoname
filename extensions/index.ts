@@ -187,14 +187,15 @@ export function buildNamingPrompt(
   parts: Array<{ role: string; text: string }>,
   locale: string,
 ): string[] {
-  const normalizedLocale = locale.toLowerCase();
-  const langHint = normalizedLocale.startsWith("zh")
+  const normalizedLocale = locale.trim().toLowerCase();
+  const hasLanguage = (language: string) => new RegExp(`^${language}(?:$|[_.-])`).test(normalizedLocale);
+  const langHint = hasLanguage("zh")
     ? "用中文（简体）输出名称"
-    : normalizedLocale.startsWith("ja")
+    : hasLanguage("ja")
       ? "日本語で出力"
-      : normalizedLocale.startsWith("ko")
+      : hasLanguage("ko")
         ? "한국어로 출력"
-        : normalizedLocale.startsWith("ru")
+        : hasLanguage("ru")
           ? "Пиши название по-русски"
           : "Output in English";
 

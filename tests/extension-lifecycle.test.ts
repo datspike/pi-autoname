@@ -131,6 +131,7 @@ describe("extensions/index.ts lifecycle", () => {
 
     expect(buildNamingPrompt(parts, "ru_RU.UTF-8")[0]).toBe("Пиши название по-русски.");
     expect(buildNamingPrompt(parts, "xx_XX.UTF-8")[0]).toBe("Output in English.");
+    expect(buildNamingPrompt(parts, "russian_RU.UTF-8")[0]).toBe("Output in English.");
   });
 
   it("does not surface session file diagnostics when debug is off", async () => {
