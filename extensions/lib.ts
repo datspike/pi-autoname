@@ -102,8 +102,8 @@ export function isHighQualityName(name: string): boolean {
   if (RAW_SLICE_RE.test(name)) return false;
   if (SENTENCE_END_RE.test(name)) return false;
   if ((name.match(/[，,。！？!?]/g) || []).length > 1) return false;
-  const hasContent = /[\u4e00-\u9fff]/.test(name) || /^[A-Za-z][A-Za-z0-9_\-\s]{2,30}$/.test(name);
-  return hasContent;
+  // Название может быть на любом языке, но должно содержать хотя бы одну букву или цифру.
+  return /[\p{L}\p{N}]/u.test(name);
 }
 
 export function blockText(content: any): string {

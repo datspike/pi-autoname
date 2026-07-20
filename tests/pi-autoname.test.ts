@@ -15,6 +15,7 @@ import {
   MIN_COOLDOWN_MINUTES,
   MAX_COOLDOWN_MINUTES,
 } from "../extensions/lib.js";
+import { extractCleanName } from "../extensions/index.js";
 
 // ---------------------------------------------------------------------------
 // normalizeConfig
@@ -205,6 +206,18 @@ describe("isHighQualityName", () => {
     // RAW_SLICE_RE rejects names starting with common prefixes like 你
     // but a comma in mid-phrase is allowed if the name itself is valid
     expect(isHighQualityName("修复，重构")).toBe(true);
+  });
+
+  it("accepts names from localized Unicode scripts", () => {
+    expect(isHighQualityName("Исправление тестов")).toBe(true);
+    expect(isHighQualityName("إصلاح الاختبارات")).toBe(true);
+  });
+});
+
+describe("extractCleanName", () => {
+  it("preserves Unicode combining marks in localized names", () => {
+    const name = "Cafe\u0301 debugging";
+    expect(extractCleanName({ content: [{ type: "text", text: name }] })).toBe(name);
   });
 });
 
