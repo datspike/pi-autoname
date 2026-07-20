@@ -485,10 +485,6 @@ async function maybeAutoname(
   }
 
   const models = buildModelChain(config, ctx);
-  if (models.length === 0) {
-    debugLog("no models available");
-    return { ok: false, source: false };
-  }
 
   const branch = ctx.sessionManager.getBranch();
   const parts = extractDialogueParts(branch, mode);
