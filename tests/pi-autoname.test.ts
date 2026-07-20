@@ -297,6 +297,12 @@ describe("smartFallbackName", () => {
     const name = smartFallbackName("   ");
     expect(name.length).toBeGreaterThanOrEqual(0);
   });
+
+  it("keeps the raw fallback branch within the session name limit", () => {
+    const name = smartFallbackName("请" + "a".repeat(MAX_NAME_LENGTH + 10));
+    expect(name).toHaveLength(MAX_NAME_LENGTH);
+    expect(name.length).toBeLessThanOrEqual(MAX_NAME_LENGTH);
+  });
 });
 
 // ---------------------------------------------------------------------------

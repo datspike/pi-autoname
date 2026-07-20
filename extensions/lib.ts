@@ -137,7 +137,7 @@ export function smartFallbackName(text: string): string {
   s = s.replace(/(?:吗|呢|吧|啊|呀|哦|嘛|的|了|着|过)[\s,，.。]*$/, "").trim();
   s = s.replace(/[。！？!?.…]+\s*$/, "").trim();
 
-  return s || text.slice(0, 40).replace(/\n/g, " ").trim();
+  return s || text.slice(0, MAX_NAME_LENGTH).replace(/\n/g, " ").trim();
 }
 
 /** A persisted pi-autoname state marker — one of three flavors. */
