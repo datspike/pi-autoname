@@ -334,6 +334,34 @@ describe("extensions/index.ts lifecycle", () => {
     expect(pi._getSessionName()).toBe("已有标题");
   });
 
+  it("тихо использует резервную конфигурацию при повреждённом файле", async () => {
+    vi.useFakeTimers();
+    const configDir = path.join(tempHome, ".pi", "agent");
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(path.join(configDir, "pi-autoname.json"), "{", "utf-8");
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const branch = [message("user", "Проверить конфиг"), message("assistant", "готово")];
+      const pi = createFakePi(branch, "pi-autoname");
+      const ctx = createContext(branch, undefined, null);
+      const { default: extension } = await loadExtensionModule(tempHome);
+      extension(pi as any);
+      await pi._getHandler("session_start")({}, ctx);
+      await pi._getHandler("agent_end")({}, ctx);
+      await pi._getHandler("agent_end")({}, ctx);
+
+      expect(errSpy).not.toHaveBeenCalled();
+      expect(pi._getSessionName()).toBe("Проверить конфиг");
+      expect(branch.at(-1)).toMatchObject({
+        type: "custom",
+        customType: "pi-autoname-state",
+        data: { source: "fallback" },
+      });
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
   it("records a user_rename marker when the session name changes out of band", async () => {
     vi.useFakeTimers();
     const now = new Date("2026-06-18T10:00:00.000Z");
