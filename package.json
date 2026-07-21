@@ -32,15 +32,16 @@
   "scripts": {
     "test": "vitest run --pool=threads",
     "typecheck": "tsc --noEmit",
-    "test:watch": "vitest --pool=threads"
+    "test:watch": "vitest --pool=threads",
+    "check:compat:min": "node scripts/check-compat-min.mjs"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-ai": ">=0.79.10 <0.82.0",
+    "@earendil-works/pi-coding-agent": ">=0.79.10 <0.82.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.79.10",
-    "@earendil-works/pi-coding-agent": "^0.79.10",
+    "@earendil-works/pi-ai": "0.79.10",
+    "@earendil-works/pi-coding-agent": "0.79.10",
     "typescript": "^5.9.3",
     "vitest": "^4.1.0"
   },

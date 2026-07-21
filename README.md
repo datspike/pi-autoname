@@ -32,6 +32,15 @@ pi install npm:pi-autoname
 
 **Works out of the box.** No configuration needed — uses your current session's model by default.
 
+### Pi compatibility
+
+The published package requires Pi API packages in the tested range `>=0.79.10 <0.82.0`:
+
+- `@earendil-works/pi-ai` `>=0.79.10 <0.82.0`
+- `@earendil-works/pi-coding-agent` `>=0.79.10 <0.82.0`
+
+CI checks the minimum supported version (`0.79.10`) directly from the lockfile. Versions below `0.79.10` and future major/minor versions outside the upper bound are intentionally rejected by npm.
+
 ## ⚙️ Configuration
 
 Config file is **auto-generated** on first use at `~/.pi/agent/pi-autoname.json`:
