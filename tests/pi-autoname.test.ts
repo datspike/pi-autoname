@@ -269,10 +269,12 @@ describe("smartFallbackName", () => {
     expect(name.length).toBeGreaterThan(0);
   });
 
-  it("truncates long text", () => {
-    const long = "A".repeat(200);
+  it("keeps long fallback within the session name limit", () => {
+    const long = "Investigate the database connection timeout in the production deployment pipeline";
     const name = smartFallbackName(long);
-    expect(name.length).toBeLessThanOrEqual(50);
+    expect(name).toBe("Investigate the database");
+    expect(name.length).toBeLessThanOrEqual(MAX_NAME_LENGTH);
+    expect(isHighQualityName(name)).toBe(true);
   });
 
   it("truncates at sentence boundary when early", () => {
@@ -294,6 +296,12 @@ describe("smartFallbackName", () => {
   it("handles empty text gracefully", () => {
     const name = smartFallbackName("   ");
     expect(name.length).toBeGreaterThanOrEqual(0);
+  });
+
+  it("keeps the raw fallback branch within the session name limit", () => {
+    const name = smartFallbackName("请" + "a".repeat(MAX_NAME_LENGTH + 10));
+    expect(name).toHaveLength(MAX_NAME_LENGTH);
+    expect(name.length).toBeLessThanOrEqual(MAX_NAME_LENGTH);
   });
 });
 

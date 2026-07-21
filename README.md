@@ -22,7 +22,7 @@
 | Conversation continues | Silently re-names every 10 minutes (configurable) |
 | Session topic drifts | Name updates to reflect the new focus |
 | Run `/autoname` | Manually regenerate from recent context |
-| AI naming fails | Falls back to smart text extraction |
+| AI naming fails | Falls back to smart text extraction (up to 30 characters) |
 
 ## 🚀 Install
 
