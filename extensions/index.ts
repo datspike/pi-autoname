@@ -535,10 +535,6 @@ async function maybeAutoname(
   }
 
   const models = buildModelChain(config, ctx);
-  if (models.length === 0) {
-    debugLog("no models available");
-    return { ok: false, source: false };
-  }
 
   const branch = ctx.sessionManager.getBranch();
   const parts = extractDialogueParts(branch, mode);
@@ -568,9 +564,11 @@ async function maybeAutoname(
     return true;
   };
 
-  // Try AI naming
-  const aiResult = await tryNamingWithModels(parts, models, ctx, config, ticketPrefix, applyName);
-  if (aiResult) return { ...aiResult, ...(aiResult.ok && ticketPrefix ? { ticketPrefix } : {}) };
+  // Try AI naming when at least one configured or session model is available.
+  if (models.length > 0) {
+    const aiResult = await tryNamingWithModels(parts, models, ctx, config, ticketPrefix, applyName);
+    if (aiResult) return { ...aiResult, ...(aiResult.ok && ticketPrefix ? { ticketPrefix } : {}) };
+  }
 
   debugLog("all models failed, using smart fallback");
 

@@ -278,6 +278,26 @@ describe("extensions/index.ts lifecycle", () => {
     });
   });
 
+  it("uses local fallback when no naming model is available", async () => {
+    const branch = [message("user", "Fix the database connection timeout"), message("assistant", "I will inspect the configuration")];
+    const pi = createFakePi(branch);
+    const ctx = createContext(branch);
+    (ctx as any).model = null;
+    const { default: extension } = await loadExtensionModule(tempHome);
+
+    extension(pi as any);
+    await pi._getHandler("session_start")({}, ctx);
+    await pi._getHandler("agent_end")({}, ctx);
+
+    expect(completeMock).not.toHaveBeenCalled();
+    expect(pi._getSessionName()).toBe("Fix the database connection");
+    expect(branch.at(-1)).toMatchObject({
+      type: "custom",
+      customType: "pi-autoname-state",
+      data: { name: "Fix the database connection", source: "fallback" },
+    });
+  });
+
   it("restores ai naming state and skips periodic rename before cooldown passes", async () => {
     vi.useFakeTimers();
     const now = new Date("2026-06-18T09:00:00.000Z");
