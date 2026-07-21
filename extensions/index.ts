@@ -70,7 +70,7 @@ function loadConfig(): AutonameConfig {
       writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2), "utf-8");
       _debugEnabled = DEFAULT_CONFIG.debug;
       _configCache = { ...DEFAULT_CONFIG };
-      _configMtime = 0;
+      _configMtime = statSync(CONFIG_PATH).mtimeMs;
       return _configCache;
     }
 

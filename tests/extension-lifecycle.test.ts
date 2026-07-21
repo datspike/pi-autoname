@@ -5,6 +5,8 @@ import * as path from "node:path";
 
 const completeMock = vi.fn();
 const getModelMock = vi.fn();
+let configStatCalls = 0;
+let configReadCalls = 0;
 
 vi.mock("@earendil-works/pi-ai", () => ({
   complete: (...args: unknown[]) => completeMock(...args),
@@ -17,6 +19,21 @@ let currentHome = "";
 vi.mock("os", async (importOriginal) => {
   const actual = await importOriginal<typeof import("os")>();
   return { ...actual, homedir: () => currentHome };
+});
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    statSync: (...args: Parameters<typeof actual.statSync>) => {
+      configStatCalls += 1;
+      return actual.statSync(...args);
+    },
+    readFileSync: (...args: Parameters<typeof actual.readFileSync>) => {
+      configReadCalls += 1;
+      return actual.readFileSync(...args);
+    },
+  };
 });
 
 type FakePi = ReturnType<typeof createFakePi>;
@@ -103,6 +120,8 @@ describe("extensions/index.ts lifecycle", () => {
     tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "pi-autoname-ext-test-"));
     completeMock.mockReset();
     getModelMock.mockReset();
+    configStatCalls = 0;
+    configReadCalls = 0;
     vi.useRealTimers();
   });
 
@@ -154,6 +173,21 @@ describe("extensions/index.ts lifecycle", () => {
 
     const prompt = completeMock.mock.calls[0]?.[1]?.messages?.[0]?.content?.[0]?.text;
     expect(prompt).toContain("Пиши название по-русски.");
+  });
+
+  it("caches the automatically created config without rereading it", async () => {
+    vi.useFakeTimers();
+    const branch = [message("user", "проверить кэш конфигурации"), message("assistant", "готово")];
+    const pi = createFakePi(branch, "pi-autoname");
+    const ctx = createContext(branch, undefined, null);
+    const { default: extension } = await loadExtensionModule(tempHome);
+
+    extension(pi as any);
+    expect(configReadCalls).toBe(0);
+
+    await pi._getHandler("session_start")({}, ctx);
+    await pi._getHandler("agent_end")({}, ctx);
+    expect(configReadCalls).toBe(0);
   });
 
   it("does not surface session file diagnostics when debug is off", async () => {
