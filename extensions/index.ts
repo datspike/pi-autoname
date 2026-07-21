@@ -342,7 +342,7 @@ async function callModelWithTimeout(
  * Extract and clean name from model response.
  * Returns undefined if quality check fails.
  */
-function extractCleanName(response: any, maxNameLength = DEFAULT_CONFIG.maxNameLength): string | undefined {
+export function extractCleanName(response: any, maxNameLength = DEFAULT_CONFIG.maxNameLength): string | undefined {
   // Try text content first, then thinking content
   let text = response.content
     ?.filter((c: any) => c.type === "text")
@@ -363,7 +363,7 @@ function extractCleanName(response: any, maxNameLength = DEFAULT_CONFIG.maxNameL
 
   const cleaned = text
     ?.replace(/^["'`\u201c\u201d\u3001]+|["'`\u201c\u201d\u3001]+$/g, "")
-    .replace(/[^\p{L}\p{N}\s\-_/.#+]/gu, "")
+    .replace(/[^\p{L}\p{M}\p{N}\s\-_/.#+]/gu, "")
     .trim();
 
   if (!cleaned || !isHighQualityName(cleaned, maxNameLength)) {

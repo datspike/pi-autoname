@@ -414,7 +414,9 @@ describe("extensions/index.ts lifecycle", () => {
         source: "ai",
       },
     });
-    expect(branch.at(-1).data).not.toHaveProperty("ticketPrefix");
+    const lastEntry = branch.at(-1) as { type?: string; data?: unknown } | undefined;
+    expect(lastEntry?.type).toBe("custom");
+    expect(lastEntry?.data).not.toHaveProperty("ticketPrefix");
   });
 
   it("сохраняет единственный тикет из первого сообщения между переименованиями", async () => {

@@ -27,8 +27,8 @@ export const SENSITIVE_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
   { re: /\bAKIA[0-9A-Z]{16}\b/g, replacement: "[REDACTED_AWS_KEY]" },
   { re: /\bsk-[A-Za-z0-9_-]{20,}\b/g, replacement: "[REDACTED_API_KEY]" },
   { re: /\b(Bearer\s+)[A-Za-z0-9._~+/=-]{20,}/gi, replacement: "$1[REDACTED]" },
-  { re: /\b([A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD))\s*=\s*["']?[^"'\s]+/g, replacement: "$1=[REDACTED]" },
-  { re: /\b(api[_-]?key|token|secret|password)\b\s*[:=]\s*["']?[^"'\s,;]+/gi, replacement: "$1=[REDACTED]" },
+  { re: /\b([A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD))\s*=\s*(?:"[^"]*"|'[^']*'|[^"'\s,;]+)/g, replacement: "$1=[REDACTED]" },
+  { re: /\b(api[_-]?key|token|secret|password)\b\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^"'\s,;]+)/gi, replacement: "$1=[REDACTED]" },
 ];
 
 export interface AutonameConfig {
@@ -201,19 +201,18 @@ export function smartFallbackName(text: string): string {
     .trim();
 
   const sentenceEnd = s.match(/[.!?。！？]/);
-  if (sentenceEnd && sentenceEnd.index! < 60) {
+  if (sentenceEnd && sentenceEnd.index! < MAX_NAME_LENGTH) {
     s = s.slice(0, sentenceEnd.index! + 1);
-  } else if (s.length > 45) {
-    const cut = s.lastIndexOf(" ", 45);
-    s = cut > 10 ? s.slice(0, cut) : s.slice(0, 42);
+  } else if (s.length > MAX_NAME_LENGTH) {
+    const cut = s.lastIndexOf(" ", MAX_NAME_LENGTH);
+    s = cut > 10 ? s.slice(0, cut) : s.slice(0, MAX_NAME_LENGTH);
   }
 
   s = s.replace(/(?:吗|呢|吧|啊|呀|哦|嘛|的|了|着|过)[\s,，.。]*$/, "").trim();
   s = s.replace(/[。！？!?.…]+\s*$/, "").trim();
 
-  return s || text.slice(0, 40).replace(/\n/g, " ").trim();
+  return s || text.slice(0, MAX_NAME_LENGTH).replace(/\n/g, " ").trim();
 }
-
 /** Сохранённое состояние переименования с закреплённым тикетом сессии. */
 export type RenameMarker =
   | { kind: "ai"; name: string; source: "ai"; timestamp: number; ticketPrefix?: string }
@@ -268,6 +267,15 @@ export function parseRenameMarker(data: unknown): RenameMarker | undefined {
   }
 
   return undefined;
+}
+
+/** Определяет, разрешено ли автоматическое переименование при ручном имени. */
+export function shouldRunAutomaticRename(
+  respectManualName: boolean,
+  currentNameKind: RenameMarker["kind"] | undefined,
+ ): boolean {
+  if (!respectManualName) return true;
+  return currentNameKind !== "user_rename";
 }
 
 export function getFirstDialogue(branch: any[]) {
