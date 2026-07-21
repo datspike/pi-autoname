@@ -24,8 +24,8 @@ export const SENSITIVE_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
   { re: /\bAKIA[0-9A-Z]{16}\b/g, replacement: "[REDACTED_AWS_KEY]" },
   { re: /\bsk-[A-Za-z0-9_-]{20,}\b/g, replacement: "[REDACTED_API_KEY]" },
   { re: /\b(Bearer\s+)[A-Za-z0-9._~+/=-]{20,}/gi, replacement: "$1[REDACTED]" },
-  { re: /\b([A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD))\s*=\s*["']?[^"'\s]+/g, replacement: "$1=[REDACTED]" },
-  { re: /\b(api[_-]?key|token|secret|password)\b\s*[:=]\s*["']?[^"'\s,;]+/gi, replacement: "$1=[REDACTED]" },
+  { re: /\b([A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD))\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\"'\s,;]+)/g, replacement: "$1=[REDACTED]" },
+  { re: /\b(api[_-]?key|token|secret|password)\b\s*[:=]\s*(?:\"[^\"]*\"|'[^']*'|[^\"'\s,;]+)/gi, replacement: "$1=[REDACTED]" },
 ];
 
 export interface AutonameConfig {
