@@ -87,9 +87,10 @@ function loadConfig(): AutonameConfig {
     _configMtime = stat.mtimeMs;
     return config;
   } catch (error) {
-    _debugEnabled = DEFAULT_CONFIG.debug;
+    const debugEnabled = _configCache?.debug ?? DEFAULT_CONFIG.debug;
+    _debugEnabled = debugEnabled;
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`[pi-autoname] failed to load config; using defaults: ${message}`);
+    debugLog(`failed to load config; using defaults: ${message}`);
     _configCache = { ...DEFAULT_CONFIG };
     _configMtime = 0;
     return _configCache;
