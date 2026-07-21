@@ -152,6 +152,25 @@ describe("redactSensitiveText", () => {
     expect(r.redacted).toBe(true);
   });
 
+  it("redacts quoted uppercase assignment values with spaces", () => {
+    const r = redactSensitiveText('API_PASSWORD="correct horse battery staple"');
+    expect(r.text).toBe("API_PASSWORD=[REDACTED]");
+    expect(r.text).not.toContain("correct");
+    expect(r.text).not.toContain("horse");
+    expect(r.text).not.toContain("battery");
+    expect(r.text).not.toContain("staple");
+    expect(r.redacted).toBe(true);
+  });
+
+  it("redacts quoted generic secret values with spaces", () => {
+    const r = redactSensitiveText("MY_TOKEN='part one two'");
+    expect(r.text).toBe("MY_TOKEN=[REDACTED]");
+    expect(r.text).not.toContain("part");
+    expect(r.text).not.toContain("one");
+    expect(r.text).not.toContain("two");
+    expect(r.redacted).toBe(true);
+  });
+
   it("handles multiple secrets in one text", () => {
     const r = redactSensitiveText("key sk-1234567890abcdef1234567890abcdef and AKIAIOSFODNN7EXAMPLE");
     expect(r.text).not.toContain("sk-1234567890abcdef1234567890abcdef");
