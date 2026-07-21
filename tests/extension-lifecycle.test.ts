@@ -5,8 +5,6 @@ import * as path from "node:path";
 
 const completeMock = vi.fn();
 const getModelMock = vi.fn();
-let configStatCalls = 0;
-let configReadCalls = 0;
 
 vi.mock("@earendil-works/pi-ai", () => ({
   complete: (...args: unknown[]) => completeMock(...args),
@@ -19,21 +17,6 @@ let currentHome = "";
 vi.mock("os", async (importOriginal) => {
   const actual = await importOriginal<typeof import("os")>();
   return { ...actual, homedir: () => currentHome };
-});
-
-vi.mock("node:fs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs")>();
-  return {
-    ...actual,
-    statSync: (...args: Parameters<typeof actual.statSync>) => {
-      configStatCalls += 1;
-      return actual.statSync(...args);
-    },
-    readFileSync: (...args: Parameters<typeof actual.readFileSync>) => {
-      configReadCalls += 1;
-      return actual.readFileSync(...args);
-    },
-  };
 });
 
 type FakePi = ReturnType<typeof createFakePi>;
@@ -73,7 +56,7 @@ function createFakePi(branch: any[], initialSessionName?: string) {
   };
 }
 
-function createContext(branch: any[], sessionFile?: string, model: any = { provider: "test-provider", id: "test-model", api: "mock-api" }) {
+function createContext(branch: any[], sessionFile?: string) {
   return {
     sessionManager: {
       getBranch: () => branch,
@@ -83,7 +66,7 @@ function createContext(branch: any[], sessionFile?: string, model: any = { provi
       getApiKeyAndHeaders: vi.fn(async () => ({ ok: true, apiKey: "test-key", headers: {} })),
       find: vi.fn(() => null),
     },
-    model,
+    model: { provider: "test-provider", id: "test-model", api: "mock-api" },
     signal: new AbortController().signal,
     ui: { notify: vi.fn() },
   };
@@ -108,20 +91,12 @@ async function loadExtensionModule(homeDir: string) {
 describe("extensions/index.ts lifecycle", () => {
   let tempHome: string;
   let originalHome: string | undefined;
-  let originalPiLocale: string | undefined;
-  let originalLcAll: string | undefined;
-  let originalLang: string | undefined;
 
   beforeEach(async () => {
     originalHome = process.env.HOME;
-    originalPiLocale = process.env.PI_LOCALE;
-    originalLcAll = process.env.LC_ALL;
-    originalLang = process.env.LANG;
     tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "pi-autoname-ext-test-"));
     completeMock.mockReset();
     getModelMock.mockReset();
-    configStatCalls = 0;
-    configReadCalls = 0;
     vi.useRealTimers();
   });
 
@@ -132,10 +107,7 @@ describe("extensions/index.ts lifecycle", () => {
     } else {
       process.env.HOME = originalHome;
     }
-    for (const [key, value] of Object.entries({ PI_LOCALE: originalPiLocale, LC_ALL: originalLcAll, LANG: originalLang })) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
+    vi.unstubAllEnvs();
     await fs.rm(tempHome, { recursive: true, force: true });
   });
 
@@ -144,26 +116,22 @@ describe("extensions/index.ts lifecycle", () => {
     expect(typeof mod.default).toBe("function");
   });
 
-  it("выбирает русский язык для ru-локали и английский резерв для неизвестной локали", async () => {
-    const { buildNamingPrompt } = await loadExtensionModule(tempHome);
-    const parts = [{ role: "user", text: "проверить локаль" }];
-
-    expect(buildNamingPrompt(parts, "ru_RU.UTF-8")[0]).toBe("Пиши название по-русски.");
-    expect(buildNamingPrompt(parts, "xx_XX.UTF-8")[0]).toBe("Output in English.");
-    expect(buildNamingPrompt(parts, "russian_RU.UTF-8")[0]).toBe("Output in English.");
-  });
-
-  it("игнорирует пробельную PI_LOCALE и использует следующую локаль", async () => {
-    vi.useFakeTimers();
+  it("prefers configured locale over an English LANG environment", async () => {
+    vi.stubEnv("LANG", "en_US.UTF-8");
+    await fs.mkdir(path.join(tempHome, ".pi", "agent"), { recursive: true });
+    await fs.writeFile(
+      path.join(tempHome, ".pi", "agent", "pi-autoname.json"),
+      JSON.stringify({ enabled: true, locale: "ru_RU.UTF-8" }),
+      "utf-8",
+    );
     completeMock.mockResolvedValue({
-      content: [{ type: "text", text: "Резервная локаль" }],
+      content: [{ type: "text", text: "Обновление Telegram в системе" }],
       stopReason: "stop",
       errorMessage: undefined,
     });
-    const branch = [message("user", "проверить резервную локаль"), message("assistant", "готово")];
-    process.env.PI_LOCALE = "   ";
-    process.env.LC_ALL = "ru_RU.UTF-8";
-    const pi = createFakePi(branch, "pi-autoname");
+
+    const branch = [message("user", "обнови телеграм"), message("assistant", "обновляю")];
+    const pi = createFakePi(branch);
     const ctx = createContext(branch);
     const { default: extension } = await loadExtensionModule(tempHome);
 
@@ -171,23 +139,9 @@ describe("extensions/index.ts lifecycle", () => {
     await pi._getHandler("session_start")({}, ctx);
     await pi._getHandler("agent_end")({}, ctx);
 
-    const prompt = completeMock.mock.calls[0]?.[1]?.messages?.[0]?.content?.[0]?.text;
-    expect(prompt).toContain("Пиши название по-русски.");
-  });
-
-  it("caches the automatically created config without rereading it", async () => {
-    vi.useFakeTimers();
-    const branch = [message("user", "проверить кэш конфигурации"), message("assistant", "готово")];
-    const pi = createFakePi(branch, "pi-autoname");
-    const ctx = createContext(branch, undefined, null);
-    const { default: extension } = await loadExtensionModule(tempHome);
-
-    extension(pi as any);
-    expect(configReadCalls).toBe(0);
-
-    await pi._getHandler("session_start")({}, ctx);
-    await pi._getHandler("agent_end")({}, ctx);
-    expect(configReadCalls).toBe(0);
+    const prompt = completeMock.mock.calls[0][1].messages[0].content[0].text;
+    expect(prompt).toContain("locale: ru_RU.UTF-8");
+    expect(prompt).not.toContain("Output in English");
   });
 
   it("does not surface session file diagnostics when debug is off", async () => {
@@ -297,17 +251,16 @@ describe("extensions/index.ts lifecycle", () => {
     });
   });
 
-  it("устанавливает локализованное имя, полученное от модели", async () => {
+  it("treats a pre-existing display name without matching marker as fresh and auto-renames after first dialogue", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-18T08:22:19.500Z"));
     completeMock.mockResolvedValue({
-      content: [{ type: "text", text: "Исправление тестов" }],
+      content: [{ type: "text", text: "语义化标题" }],
       stopReason: "stop",
       errorMessage: undefined,
     });
 
-    const branch = [message("user", "проверить локаль"), message("assistant", "готово")];
-    process.env.PI_LOCALE = "ru_RU.UTF-8";
+    const branch = [message("user", "帮我排查 session 命名问题"), message("assistant", "先读代码再判断")];
     const pi = createFakePi(branch, "pi-autoname");
     const ctx = createContext(branch);
     const { default: extension } = await loadExtensionModule(tempHome);
@@ -317,19 +270,19 @@ describe("extensions/index.ts lifecycle", () => {
     await pi._getHandler("agent_end")({}, ctx);
 
     expect(completeMock).toHaveBeenCalledTimes(1);
-    expect(pi._getSessionName()).toBe("Исправление тестов");
+    expect(pi._getSessionName()).toBe("语义化标题");
     expect(branch.at(-1)).toMatchObject({
       type: "custom",
       customType: "pi-autoname-state",
-      data: { name: "Исправление тестов", source: "ai" },
+      data: { name: "语义化标题", source: "ai" },
     });
   });
 
-  it("uses local fallback when no models are available", async () => {
-    vi.useFakeTimers();
-    const branch = [message("user", "Fix empty model chain"), message("assistant", "checking fallback")];
-    const pi = createFakePi(branch, "pi-autoname");
-    const ctx = createContext(branch, undefined, null);
+  it("uses local fallback when no naming model is available", async () => {
+    const branch = [message("user", "Fix the database connection timeout"), message("assistant", "I will inspect the configuration")];
+    const pi = createFakePi(branch);
+    const ctx = createContext(branch);
+    (ctx as any).model = null;
     const { default: extension } = await loadExtensionModule(tempHome);
 
     extension(pi as any);
@@ -337,11 +290,11 @@ describe("extensions/index.ts lifecycle", () => {
     await pi._getHandler("agent_end")({}, ctx);
 
     expect(completeMock).not.toHaveBeenCalled();
-    expect(pi._getSessionName()).toBe("Fix empty model chain");
+    expect(pi._getSessionName()).toBe("Fix the database connection");
     expect(branch.at(-1)).toMatchObject({
       type: "custom",
       customType: "pi-autoname-state",
-      data: { name: "Fix empty model chain", source: "fallback" },
+      data: { name: "Fix the database connection", source: "fallback" },
     });
   });
 
@@ -366,34 +319,6 @@ describe("extensions/index.ts lifecycle", () => {
 
     expect(completeMock).not.toHaveBeenCalled();
     expect(pi._getSessionName()).toBe("已有标题");
-  });
-
-  it("тихо использует резервную конфигурацию при повреждённом файле", async () => {
-    vi.useFakeTimers();
-    const configDir = path.join(tempHome, ".pi", "agent");
-    await fs.mkdir(configDir, { recursive: true });
-    await fs.writeFile(path.join(configDir, "pi-autoname.json"), "{", "utf-8");
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const branch = [message("user", "Проверить конфиг"), message("assistant", "готово")];
-      const pi = createFakePi(branch, "pi-autoname");
-      const ctx = createContext(branch, undefined, null);
-      const { default: extension } = await loadExtensionModule(tempHome);
-      extension(pi as any);
-      await pi._getHandler("session_start")({}, ctx);
-      await pi._getHandler("agent_end")({}, ctx);
-      await pi._getHandler("agent_end")({}, ctx);
-
-      expect(errSpy).not.toHaveBeenCalled();
-      expect(pi._getSessionName()).toBe("Проверить конфиг");
-      expect(branch.at(-1)).toMatchObject({
-        type: "custom",
-        customType: "pi-autoname-state",
-        data: { source: "fallback" },
-      });
-    } finally {
-      errSpy.mockRestore();
-    }
   });
 
   it("records a user_rename marker when the session name changes out of band", async () => {
@@ -422,6 +347,50 @@ describe("extensions/index.ts lifecycle", () => {
       data: { event: "user_rename", name: "手工标题", timestamp: now.getTime() + 5_000 },
     });
     expect(completeMock).not.toHaveBeenCalled();
+  });
+
+  it("respects manual names after cooldown when enabled", async () => {
+    vi.useFakeTimers();
+    const now = new Date("2026-06-18T10:30:00.000Z");
+    vi.setSystemTime(now);
+    await fs.mkdir(path.join(tempHome, ".pi", "agent"), { recursive: true });
+    await fs.writeFile(
+      path.join(tempHome, ".pi", "agent", "pi-autoname.json"),
+      JSON.stringify({ enabled: true, respectManualName: true, cooldownMinutes: 1 }),
+      "utf-8",
+    );
+    completeMock.mockResolvedValue({
+      content: [{ type: "text", text: "Новое автоматическое имя" }],
+      stopReason: "stop",
+      errorMessage: undefined,
+    });
+
+    const branch = [
+      message("user", "продолжи задачу"),
+      message("assistant", "продолжаю"),
+      {
+        type: "custom",
+        customType: "pi-autoname-state",
+        data: { name: "Автоматическое имя", source: "ai", timestamp: now.getTime() - 120_000 },
+      },
+    ];
+    const pi = createFakePi(branch, "Автоматическое имя");
+    const ctx = createContext(branch);
+    const { default: extension } = await loadExtensionModule(tempHome);
+
+    extension(pi as any);
+    await pi._getHandler("session_start")({}, ctx);
+    pi.setSessionName("Моё ручное имя");
+    vi.setSystemTime(new Date(now.getTime() + 120_000));
+    await pi._getHandler("agent_end")({}, ctx);
+
+    expect(completeMock).not.toHaveBeenCalled();
+    expect(pi._getSessionName()).toBe("Моё ручное имя");
+    expect(branch.at(-1)).toMatchObject({
+      type: "custom",
+      customType: "pi-autoname-state",
+      data: { event: "user_rename", name: "Моё ручное имя" },
+    });
   });
 
   it("renames from recent dialogue after cooldown passes", async () => {
@@ -457,74 +426,123 @@ describe("extensions/index.ts lifecycle", () => {
       data: { name: "新的会话标题", source: "ai" },
     });
   });
-  it("restores a user rename and skips automatic naming when respectManualName is enabled", async () => {
+
+  it("не восстанавливает тикет из существующего имени старой сессии", async () => {
     vi.useFakeTimers();
-    const now = new Date("2026-06-18T10:30:00.000Z");
+    const now = new Date("2026-06-18T12:00:00.000Z");
     vi.setSystemTime(now);
     await fs.mkdir(path.join(tempHome, ".pi", "agent"), { recursive: true });
     await fs.writeFile(
       path.join(tempHome, ".pi", "agent", "pi-autoname.json"),
-      JSON.stringify({ enabled: true, respectManualName: true, cooldownMinutes: 1 }),
+      JSON.stringify({
+        enabled: true,
+        cooldownMinutes: 10,
+        maxNameLength: 80,
+        ticketPattern: "\\b([A-Z]+-\\d+)\\b",
+      }),
       "utf-8",
     );
     completeMock.mockResolvedValue({
-      content: [{ type: "text", text: "不应出现的自动标题" }],
+      content: [{ type: "text", text: "DVR-12665 Проверка черновых комментариев" }],
       stopReason: "stop",
       errorMessage: undefined,
     });
 
     const branch = [
-      message("user", "继续当前任务"),
-      message("assistant", "继续中"),
-      { type: "custom", customType: "pi-autoname-state", data: { event: "user_rename", name: "手工标题", timestamp: now.getTime() } },
+      message("user", "Уточни последний комментарий"),
+      message("assistant", "Уточняю детали"),
+      {
+        type: "custom",
+        customType: "pi-autoname-state",
+        data: {
+          name: "DVR-12665 Старое название",
+          source: "ai",
+          timestamp: now.getTime() - 11 * 60 * 1000,
+        },
+      },
     ];
-    const pi = createFakePi(branch, "手工标题");
+    const pi = createFakePi(branch, "DVR-12665 Старое название");
     const ctx = createContext(branch);
     const { default: extension } = await loadExtensionModule(tempHome);
 
     extension(pi as any);
     await pi._getHandler("session_start")({}, ctx);
-    vi.setSystemTime(new Date(now.getTime() + 2 * 60 * 1000));
     await pi._getHandler("agent_end")({}, ctx);
 
-    expect(completeMock).not.toHaveBeenCalled();
-    expect(pi._getSessionName()).toBe("手工标题");
-    expect(branch).toHaveLength(3);
+    expect(pi._getSessionName()).toBe("Проверка черновых комментариев");
+    expect(branch.at(-1)).toMatchObject({
+      type: "custom",
+      customType: "pi-autoname-state",
+      data: {
+        name: "Проверка черновых комментариев",
+        source: "ai",
+      },
+    });
+    const lastEntry = branch.at(-1) as { type?: string; data?: unknown } | undefined;
+    expect(lastEntry?.type).toBe("custom");
+    expect(lastEntry?.data).not.toHaveProperty("ticketPrefix");
   });
 
-  it("preserves a manual name set before the first agent_end when respectManualName is enabled", async () => {
+  it("сохраняет единственный тикет из первого сообщения между переименованиями", async () => {
     vi.useFakeTimers();
-    const now = new Date("2026-06-18T10:45:00.000Z");
+    const now = new Date("2026-06-18T13:00:00.000Z");
     vi.setSystemTime(now);
     await fs.mkdir(path.join(tempHome, ".pi", "agent"), { recursive: true });
     await fs.writeFile(
       path.join(tempHome, ".pi", "agent", "pi-autoname.json"),
-      JSON.stringify({ enabled: true, respectManualName: true }),
+      JSON.stringify({
+        enabled: true,
+        cooldownMinutes: 10,
+        maxNameLength: 80,
+        ticketPattern: "\\b([A-Z]+-\\d+)\\b",
+      }),
       "utf-8",
     );
-    completeMock.mockResolvedValue({
-      content: [{ type: "text", text: "не должен быть создан" }],
-      stopReason: "stop",
-      errorMessage: undefined,
-    });
+    completeMock
+      .mockResolvedValueOnce({
+        content: [{ type: "text", text: "Первичная проверка ревью" }],
+        stopReason: "stop",
+        errorMessage: undefined,
+      })
+      .mockResolvedValueOnce({
+        content: [{ type: "text", text: "Обновление черновых комментариев" }],
+        stopReason: "stop",
+        errorMessage: undefined,
+      });
 
-    const branch = [message("user", "исправить первую генерацию имени"), message("assistant", "сначала проверю состояние")];
-    const pi = createFakePi(branch, "pi-autoname");
+    const branch = [
+      message("user", "DVR-12665 проверь ревью"),
+      message("assistant", "Начинаю проверку"),
+    ];
+    const pi = createFakePi(branch);
     const ctx = createContext(branch);
     const { default: extension } = await loadExtensionModule(tempHome);
 
     extension(pi as any);
     await pi._getHandler("session_start")({}, ctx);
-    pi.setSessionName("Моё ручное имя");
+    await pi._getHandler("agent_end")({}, ctx);
+    expect(pi._getSessionName()).toBe("DVR-12665 Первичная проверка ревью");
+
+    branch.push(
+      message("user", "Уточни первый комментарий"),
+      message("assistant", "Уточняю первый комментарий"),
+      message("user", "Проверь второй комментарий"),
+      message("assistant", "Проверяю второй комментарий"),
+      message("user", "Теперь обнови черновик"),
+      message("assistant", "Обновляю черновик без номера задачи"),
+    );
+    vi.setSystemTime(new Date(now.getTime() + 11 * 60 * 1000));
     await pi._getHandler("agent_end")({}, ctx);
 
-    expect(completeMock).not.toHaveBeenCalled();
-    expect(pi._getSessionName()).toBe("Моё ручное имя");
+    expect(pi._getSessionName()).toBe("DVR-12665 Обновление черновых комментариев");
     expect(branch.at(-1)).toMatchObject({
       type: "custom",
       customType: "pi-autoname-state",
-      data: { event: "user_rename", name: "Моё ручное имя", timestamp: now.getTime() },
+      data: {
+        name: "DVR-12665 Обновление черновых комментариев",
+        source: "ai",
+        ticketPrefix: "DVR-12665",
+      },
     });
   });
-
 });

@@ -3,6 +3,9 @@ import {
   normalizeConfig,
   redactSensitiveText,
   isHighQualityName,
+  extractTicketPrefix,
+  withTicketPrefix,
+  withoutTicketPrefix,
   blockText,
   smartFallbackName,
   getFirstDialogue,
@@ -14,6 +17,8 @@ import {
   MAX_NAME_LENGTH,
   MIN_COOLDOWN_MINUTES,
   MAX_COOLDOWN_MINUTES,
+  MIN_CONFIG_NAME_LENGTH,
+  MAX_CONFIG_NAME_LENGTH,
 } from "../extensions/lib.js";
 import { extractCleanName } from "../extensions/index.js";
 
@@ -34,6 +39,10 @@ describe("normalizeConfig", () => {
       fallbackModels: ["anthropic/claude-3"],
       cooldownMinutes: 5,
       debug: true,
+      locale: "  ru_RU.UTF-8  ",
+      maxNameLength: 80,
+      promptExtra: "  Prefer work-ticket prefixes  ",
+      ticketPattern: "  \\b([A-Z]+-\\d+)\\b  ",
       respectManualName: false,
     });
     expect(result.enabled).toBe(false);
@@ -41,6 +50,10 @@ describe("normalizeConfig", () => {
     expect(result.fallbackModels).toEqual(["anthropic/claude-3"]);
     expect(result.cooldownMinutes).toBe(5);
     expect(result.debug).toBe(true);
+    expect(result.locale).toBe("ru_RU.UTF-8");
+    expect(result.maxNameLength).toBe(80);
+    expect(result.promptExtra).toBe("Prefer work-ticket prefixes");
+    expect(result.ticketPattern).toBe("\\b([A-Z]+-\\d+)\\b");
     expect(result.respectManualName).toBe(false);
   });
 
@@ -50,6 +63,14 @@ describe("normalizeConfig", () => {
     expect(normalizeConfig({ cooldownMinutes: 2000 }).cooldownMinutes).toBe(MAX_COOLDOWN_MINUTES);
     expect(normalizeConfig({ cooldownMinutes: NaN }).cooldownMinutes).toBe(DEFAULT_CONFIG.cooldownMinutes);
     expect(normalizeConfig({ cooldownMinutes: Infinity }).cooldownMinutes).toBe(DEFAULT_CONFIG.cooldownMinutes);
+  });
+
+  it("clamps maxNameLength to valid range", () => {
+    expect(normalizeConfig({ maxNameLength: -10 }).maxNameLength).toBe(MIN_CONFIG_NAME_LENGTH);
+    expect(normalizeConfig({ maxNameLength: 0 }).maxNameLength).toBe(MIN_CONFIG_NAME_LENGTH);
+    expect(normalizeConfig({ maxNameLength: 2000 }).maxNameLength).toBe(MAX_CONFIG_NAME_LENGTH);
+    expect(normalizeConfig({ maxNameLength: 41.9 }).maxNameLength).toBe(41);
+    expect(normalizeConfig({ maxNameLength: NaN }).maxNameLength).toBe(DEFAULT_CONFIG.maxNameLength);
   });
 
   it("respectManualName: true override is preserved (legacy escape hatch)", () => {
@@ -78,9 +99,13 @@ describe("normalizeConfig", () => {
   });
 
   it("uses default for wrong types", () => {
-    const result = normalizeConfig({ enabled: "yes", debug: 1, respectManualName: "true" });
+    const result = normalizeConfig({ enabled: "yes", debug: 1, locale: 123, maxNameLength: "80", promptExtra: 123, ticketPattern: 456, respectManualName: "true" });
     expect(result.enabled).toBe(DEFAULT_CONFIG.enabled);
     expect(result.debug).toBe(DEFAULT_CONFIG.debug);
+    expect(result.locale).toBe(DEFAULT_CONFIG.locale);
+    expect(result.maxNameLength).toBe(DEFAULT_CONFIG.maxNameLength);
+    expect(result.promptExtra).toBe(DEFAULT_CONFIG.promptExtra);
+    expect(result.ticketPattern).toBe(DEFAULT_CONFIG.ticketPattern);
     expect(result.respectManualName).toBe(DEFAULT_CONFIG.respectManualName);
   });
 });
@@ -194,13 +219,19 @@ describe("isHighQualityName", () => {
     expect(isHighQualityName("Auth refactor")).toBe(true);
   });
 
+  it("accepts good Cyrillic names", () => {
+    expect(isHighQualityName("Настройка русских названий")).toBe(true);
+    expect(isHighQualityName("ABC-123 настройка названий")).toBe(true);
+  });
+
   it("rejects too short", () => {
     expect(isHighQualityName("ab")).toBe(false);
     expect(isHighQualityName("")).toBe(false);
   });
 
   it("rejects too long", () => {
-    expect(isHighQualityName("a".repeat(31))).toBe(false);
+    expect(isHighQualityName("a".repeat(MAX_NAME_LENGTH + 1))).toBe(false);
+    expect(isHighQualityName("a".repeat(MAX_NAME_LENGTH + 1), 80)).toBe(true);
   });
 
   it("rejects sentence-like openers", () => {
@@ -237,6 +268,77 @@ describe("extractCleanName", () => {
   it("preserves Unicode combining marks in localized names", () => {
     const name = "Cafe\u0301 debugging";
     expect(extractCleanName({ content: [{ type: "text", text: name }] })).toBe(name);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ticket prefix helpers
+// ---------------------------------------------------------------------------
+describe("ticket prefix helpers", () => {
+  const parts = [{ role: "user", text: "Please handle ABC-123 naming config" }];
+
+  it("extracts the first capture group from ticketPattern", () => {
+    expect(extractTicketPrefix(parts, "\\b([A-Z]+-\\d+)\\b")).toBe("ABC-123");
+  });
+
+  it("ignores ticket-like values from assistant messages", () => {
+    expect(
+      extractTicketPrefix(
+        [
+          { role: "user", text: "Изучи наше расширение" },
+          { role: "assistant", text: "Сравним DVR-12665 и DVR-12801" },
+        ],
+        "\\b([A-Z]+-\\d+)\\b",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined when user context contains different tickets", () => {
+    expect(
+      extractTicketPrefix(
+        [{ role: "user", text: "Сравни DVR-12665 и DVR-12801" }],
+        "\\b([A-Z]+-\\d+)\\b",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("deduplicates repeated mentions of the same user ticket", () => {
+    expect(
+      extractTicketPrefix(
+        [{ role: "user", text: "DVR-12665 соответствует ссылке /browse/DVR-12665" }],
+        "\\b([A-Z]+-\\d+)\\b",
+      ),
+    ).toBe("DVR-12665");
+  });
+
+  it("returns undefined for missing or invalid ticketPattern", () => {
+    expect(extractTicketPrefix(parts, "")).toBeUndefined();
+    expect(extractTicketPrefix(parts, "[")).toBeUndefined();
+  });
+
+  it("adds ticket prefix without duplicating it", () => {
+    expect(withTicketPrefix("naming config", "ABC-123")).toBe("ABC-123 naming config");
+    expect(withTicketPrefix("ABC-123 naming config", "ABC-123")).toBe("ABC-123 naming config");
+  });
+
+  it("keeps the ticket-prefixed name within maxNameLength", () => {
+    expect(withTicketPrefix("a very descriptive naming config", "ABC-123", 12)).toBe("ABC-123 a ve");
+    expect(withTicketPrefix("naming config", "ABC-123", 7)).toBe("ABC-123");
+  });
+
+  it("removes an untrusted generated ticket prefix", () => {
+    expect(
+      withoutTicketPrefix(
+        "DVR-12665 Проверка расширения",
+        "\\b((?:DVR|OST|ZATO)-\\d+)\\b",
+      ),
+    ).toBe("Проверка расширения");
+    expect(
+      withoutTicketPrefix(
+        "Проверка расширения",
+        "\\b((?:DVR|OST|ZATO)-\\d+)\\b",
+      ),
+    ).toBe("Проверка расширения");
   });
 });
 
@@ -438,6 +540,23 @@ describe("parseRenameMarker", () => {
       timestamp: 1700000000001,
     });
     expect(marker?.kind).toBe("fallback");
+  });
+
+  it("сохраняет ticketPrefix из маркера автоматического имени", () => {
+    const marker = parseRenameMarker({
+      name: "DVR-12665 Проверка ревью",
+      source: "ai",
+      ticketPrefix: "DVR-12665",
+      timestamp: 1700000000002,
+    });
+
+    expect(marker).toEqual({
+      kind: "ai",
+      name: "DVR-12665 Проверка ревью",
+      source: "ai",
+      ticketPrefix: "DVR-12665",
+      timestamp: 1700000000002,
+    });
   });
 
   it("parses a user_rename marker (recorded by agent_end)", () => {
