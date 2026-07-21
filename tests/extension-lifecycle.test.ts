@@ -329,6 +329,50 @@ describe("extensions/index.ts lifecycle", () => {
     expect(completeMock).not.toHaveBeenCalled();
   });
 
+  it("respects manual names after cooldown when enabled", async () => {
+    vi.useFakeTimers();
+    const now = new Date("2026-06-18T10:30:00.000Z");
+    vi.setSystemTime(now);
+    await fs.mkdir(path.join(tempHome, ".pi", "agent"), { recursive: true });
+    await fs.writeFile(
+      path.join(tempHome, ".pi", "agent", "pi-autoname.json"),
+      JSON.stringify({ enabled: true, respectManualName: true, cooldownMinutes: 1 }),
+      "utf-8",
+    );
+    completeMock.mockResolvedValue({
+      content: [{ type: "text", text: "Новое автоматическое имя" }],
+      stopReason: "stop",
+      errorMessage: undefined,
+    });
+
+    const branch = [
+      message("user", "продолжи задачу"),
+      message("assistant", "продолжаю"),
+      {
+        type: "custom",
+        customType: "pi-autoname-state",
+        data: { name: "Автоматическое имя", source: "ai", timestamp: now.getTime() - 120_000 },
+      },
+    ];
+    const pi = createFakePi(branch, "Автоматическое имя");
+    const ctx = createContext(branch);
+    const { default: extension } = await loadExtensionModule(tempHome);
+
+    extension(pi as any);
+    await pi._getHandler("session_start")({}, ctx);
+    pi.setSessionName("Моё ручное имя");
+    vi.setSystemTime(new Date(now.getTime() + 120_000));
+    await pi._getHandler("agent_end")({}, ctx);
+
+    expect(completeMock).not.toHaveBeenCalled();
+    expect(pi._getSessionName()).toBe("Моё ручное имя");
+    expect(branch.at(-1)).toMatchObject({
+      type: "custom",
+      customType: "pi-autoname-state",
+      data: { event: "user_rename", name: "Моё ручное имя" },
+    });
+  });
+
   it("renames from recent dialogue after cooldown passes", async () => {
     vi.useFakeTimers();
     const now = new Date("2026-06-18T11:00:00.000Z");

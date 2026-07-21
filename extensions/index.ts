@@ -19,6 +19,7 @@ import {
   getFirstDialogue,
   getRecentDialogue,
   parseRenameMarker,
+  shouldRunAutomaticRename,
   extractTicketPrefix,
   withTicketPrefix,
   withoutTicketPrefix,
@@ -595,6 +596,7 @@ export default function extension(pi: ExtensionAPI) {
   let lastRenameTime = 0;
   let lastGeneratedName: string | undefined;
   let sessionTicketPrefix: string | undefined;
+  let currentNameKind: RenameMarker["kind"] | undefined;
 
   loadConfig();
 
@@ -616,6 +618,7 @@ export default function extension(pi: ExtensionAPI) {
     //      first-dialogue on the next `agent_end`.
     if (marker?.kind === "user_rename" && existing === marker.name) {
       namingState = "named";
+      currentNameKind = "user_rename";
       lastGeneratedName = existing;
       lastRenameTime = marker.timestamp;
       sessionTicketPrefix = marker.ticketPrefix;
@@ -625,11 +628,13 @@ export default function extension(pi: ExtensionAPI) {
       marker.name === existing
     ) {
       namingState = marker.source === "ai" ? "named" : "fallback";
+      currentNameKind = marker.kind;
       lastGeneratedName = existing;
       lastRenameTime = marker.timestamp;
       sessionTicketPrefix = marker.ticketPrefix;
     } else {
       namingState = "unnamed";
+      currentNameKind = undefined;
       lastGeneratedName = undefined;
       lastRenameTime = 0; // will be set below
       sessionTicketPrefix = undefined;
@@ -671,6 +676,7 @@ export default function extension(pi: ExtensionAPI) {
         timestamp: now,
         ...(sessionTicketPrefix ? { ticketPrefix: sessionTicketPrefix } : {}),
       });
+      currentNameKind = "user_rename";
       lastGeneratedName = currentName;
     } else if (currentName) {
       // Track the name we just observed so a future change is detectable
@@ -686,6 +692,11 @@ export default function extension(pi: ExtensionAPI) {
       "sessionFileDiagnostics=", sessionFileDiagnostics,
     );
 
+    if (!shouldRunAutomaticRename(currentConfig.respectManualName ?? DEFAULT_CONFIG.respectManualName, currentNameKind)) {
+      debugLog("manual name is protected, skipping automatic rename");
+      return;
+    }
+
     // First dialogue (or retry after a low-quality fallback): try once.
     if (namingState === "unnamed" || namingState === "fallback") {
       debugLog("agent_end: triggering first-dialogue naming");
@@ -694,6 +705,7 @@ export default function extension(pi: ExtensionAPI) {
       if (result.ok) {
         namingState = result.source === "ai" ? "named" : "fallback";
         lastGeneratedName = pi.getSessionName();
+        currentNameKind = result.source === "ai" ? "ai" : "fallback";
         sessionTicketPrefix = result.ticketPrefix ?? sessionTicketPrefix;
         lastRenameTime = now;
       }
@@ -718,6 +730,7 @@ export default function extension(pi: ExtensionAPI) {
     if (newName && newName !== currentName) {
       debugLog("name updated:", currentName, "->", newName);
       lastGeneratedName = newName;
+      currentNameKind = result.source === "ai" ? "ai" : "fallback";
     } else {
       debugLog("name unchanged, resetting cooldown");
       lastGeneratedName = newName ?? lastGeneratedName;
