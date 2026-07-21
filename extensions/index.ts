@@ -558,7 +558,7 @@ async function maybeAutoname(
       debugLog("skip generated name containing only an untrusted ticket prefix");
       return false;
     }
-    const trimmed = withTicketPrefix(baseName, ticketPrefix);
+    const trimmed = withTicketPrefix(baseName, ticketPrefix, config.maxNameLength ?? DEFAULT_CONFIG.maxNameLength);
     pi.setSessionName(trimmed);
     rememberGeneratedName(pi, trimmed, source, ticketPrefix);
     return true;

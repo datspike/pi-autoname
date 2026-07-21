@@ -321,6 +321,11 @@ describe("ticket prefix helpers", () => {
     expect(withTicketPrefix("ABC-123 naming config", "ABC-123")).toBe("ABC-123 naming config");
   });
 
+  it("keeps the ticket-prefixed name within maxNameLength", () => {
+    expect(withTicketPrefix("a very descriptive naming config", "ABC-123", 12)).toBe("ABC-123 a ve");
+    expect(withTicketPrefix("naming config", "ABC-123", 7)).toBe("ABC-123");
+  });
+
   it("removes an untrusted generated ticket prefix", () => {
     expect(
       withoutTicketPrefix(

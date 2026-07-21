@@ -164,10 +164,17 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function withTicketPrefix(name: string, ticketPrefix: string | undefined): string {
+export function withTicketPrefix(
+  name: string,
+  ticketPrefix: string | undefined,
+  maxNameLength = Number.POSITIVE_INFINITY,
+ ): string {
   if (!ticketPrefix) return name;
   const duplicatePrefix = new RegExp(`^${escapeRegExp(ticketPrefix)}[\\s:–—-]*`, "iu");
-  return `${ticketPrefix} ${name.replace(duplicatePrefix, "").trim()}`.trim();
+  const suffix = name.replace(duplicatePrefix, "").trim();
+  const availableSuffixLength = maxNameLength - ticketPrefix.length - 1;
+  if (availableSuffixLength <= 0) return ticketPrefix.slice(0, maxNameLength);
+  return `${ticketPrefix} ${suffix.slice(0, availableSuffixLength)}`.trim();
 }
 
 /** Удаляет недоверенный тикет в начале имени, созданного моделью. */
