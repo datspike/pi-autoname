@@ -33,7 +33,8 @@
     "test": "vitest run --pool=threads",
     "typecheck": "tsc --noEmit",
     "test:watch": "vitest --pool=threads",
-    "check:compat:min": "node scripts/check-compat-min.mjs"
+    "check:compat:min": "node scripts/check-compat-min.mjs",
+    "prepublishOnly": "npm run check:compat:min"
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": ">=0.79.10 <0.82.0",
