@@ -269,6 +269,11 @@ describe("extractCleanName", () => {
     const name = "Cafe\u0301 debugging";
     expect(extractCleanName({ content: [{ type: "text", text: name }] })).toBe(name);
   });
+
+  it("normalizes all whitespace to a single line", () => {
+    const name = "API\nrefactor\tplan\r\n";
+    expect(extractCleanName({ content: [{ type: "text", text: name }] })).toBe("API refactor plan");
+  });
 });
 
 // ---------------------------------------------------------------------------
