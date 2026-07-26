@@ -172,8 +172,13 @@ export function withTicketPrefix(
   if (!ticketPrefix) return name;
   const duplicatePrefix = new RegExp(`^${escapeRegExp(ticketPrefix)}[\\s:–—-]*`, "iu");
   const suffix = name.replace(duplicatePrefix, "").trim();
+  if (ticketPrefix.length > maxNameLength) {
+    // Never persist a partial trusted identifier. Use the descriptive suffix
+    // without the prefix instead; the configured limit still applies.
+    return suffix.slice(0, maxNameLength).trim();
+  }
   const availableSuffixLength = maxNameLength - ticketPrefix.length - 1;
-  if (availableSuffixLength <= 0) return ticketPrefix.slice(0, maxNameLength);
+  if (availableSuffixLength <= 0) return ticketPrefix;
   return `${ticketPrefix} ${suffix.slice(0, availableSuffixLength)}`.trim();
 }
 

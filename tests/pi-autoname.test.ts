@@ -331,6 +331,15 @@ describe("ticket prefix helpers", () => {
     expect(withTicketPrefix("naming config", "ABC-123", 7)).toBe("ABC-123");
   });
 
+  it("does not persist a partial ticket prefix when the limit is shorter", () => {
+    expect(withTicketPrefix("naming config", "DVR-12665", 8)).toBe("naming c");
+    expect(withTicketPrefix("naming config", "DVR-12665", 8)).not.toContain("DVR-1266");
+  });
+
+  it("returns an empty result when an oversized prefix has no descriptive suffix", () => {
+    expect(withTicketPrefix("DVR-12665", "DVR-12665", 8)).toBe("");
+  });
+
   it("removes an untrusted generated ticket prefix", () => {
     expect(
       withoutTicketPrefix(
