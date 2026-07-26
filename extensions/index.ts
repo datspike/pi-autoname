@@ -365,6 +365,7 @@ export function extractCleanName(response: any, maxNameLength = DEFAULT_CONFIG.m
   const cleaned = text
     ?.replace(/^["'`\u201c\u201d\u3001]+|["'`\u201c\u201d\u3001]+$/g, "")
     .replace(/[^\p{L}\p{M}\p{N}\s\-_/.#+]/gu, "")
+    .replace(/\s+/gu, " ")
     .trim();
 
   if (!cleaned || !isHighQualityName(cleaned, maxNameLength)) {
