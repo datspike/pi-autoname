@@ -560,6 +560,10 @@ async function maybeAutoname(
       return false;
     }
     const trimmed = withTicketPrefix(baseName, ticketPrefix, config.maxNameLength ?? DEFAULT_CONFIG.maxNameLength);
+    if (!trimmed) {
+      debugLog("skip generated name with no usable text after ticket prefix truncation");
+      return false;
+    }
     pi.setSessionName(trimmed);
     rememberGeneratedName(pi, trimmed, source, ticketPrefix);
     return true;
