@@ -225,6 +225,30 @@ describe("extensions/index.ts lifecycle", () => {
     }
   });
 
+  it("hides config load errors when the config is invalid and debug is off", async () => {
+    await fs.mkdir(path.join(tempHome, ".pi", "agent"), { recursive: true });
+    await fs.writeFile(
+      path.join(tempHome, ".pi", "agent", "pi-autoname.json"),
+      "{ invalid json",
+      "utf-8",
+    );
+
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const branch = [message("user", "продолжи"), message("assistant", "хорошо")];
+      const pi = createFakePi(branch);
+      const ctx = createContext(branch);
+      const { default: extension } = await loadExtensionModule(tempHome);
+
+      extension(pi as any);
+      await pi._getHandler("session_start")({}, ctx);
+
+      expect(errSpy).not.toHaveBeenCalled();
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
   it("reads latest session_info and pi-autoname marker from the current session file", async () => {
     const sessionFile = path.join(tempHome, "session.jsonl");
     await fs.writeFile(
