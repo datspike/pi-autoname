@@ -9,19 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Configurable naming preferences via `locale`, `maxNameLength`, `promptExtra`, and optional `ticketPattern` prefix extraction.
+- Controller-based lifecycle with cancellation, `session_info_changed` manual-name detection, `agent_settled` naming, and `session_shutdown` cleanup.
+- Compaction-aware naming context from Pi's resolved active entries, including the retained tail around a compaction boundary.
+- User-message language handling that preserves the user's own natural language instead of guessing from Latin or Cyrillic script.
+- Optional `maxNameLength` and `ticketPattern` prefix extraction retained from the fork.
 
 ### Fixed
 
 - Accept Unicode letter/number session names so locale-generated names are not limited to CJK and English.
-- Let `locale` in `pi-autoname.json` override `PI_LOCALE`, `LC_ALL`, and `LANG`, avoiding conflicting language instructions.
-- Persist a single unambiguous task ticket from the first user message so later renames retain it without learning unrelated IDs from assistant replies, later discussion, legacy session names, or an untrusted model-generated prefix.
+- Preserve manual names by default (`respectManualName: true`), including titles set while the extension was inactive; `/autoname` remains an explicit override.
+- Infer naming language from user-authored natural language instead of a manual locale setting.
+- Persist a single unambiguous task ticket from the actual first user message so later renames retain it without learning unrelated IDs from compaction summaries, assistant replies, later discussion, legacy session names, or an untrusted model-generated prefix.
+- Keep auth lookup within the shared AI naming timeout budget.
 
 ## [0.6.5] - 2026-06-18
 
 ### Added
 
-- Extension lifecycle tests for `session_start`, `agent_end`, cooldown gating, out-of-band `/name` detection, and current-session JSONL diagnostics.
+- Extension lifecycle tests for `session_start`, `agent_settled`, cooldown gating, immediate out-of-band `/name` detection, and current-session JSONL diagnostics.
 - `readSessionFileDiagnostics()` helper to inspect the active session file's latest `session_info` and `pi-autoname-state` entries during debug runs.
 
 ### Changed

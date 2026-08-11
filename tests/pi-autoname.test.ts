@@ -9,7 +9,11 @@ import {
   blockText,
   smartFallbackName,
   getFirstDialogue,
+  getFirstUserMessage,
   getRecentDialogue,
+  getNamingContext,
+  detectDominantUserLanguage,
+  getNamingLanguageInstruction,
   parseRenameMarker,
   shouldRunAutomaticRename,
   DEFAULT_CONFIG,
@@ -39,22 +43,18 @@ describe("normalizeConfig", () => {
       fallbackModels: ["anthropic/claude-3"],
       cooldownMinutes: 5,
       debug: true,
-      locale: "  ru_RU.UTF-8  ",
       maxNameLength: 80,
-      promptExtra: "  Prefer work-ticket prefixes  ",
       ticketPattern: "  \\b([A-Z]+-\\d+)\\b  ",
-      respectManualName: false,
+      respectManualName: true,
     });
     expect(result.enabled).toBe(false);
     expect(result.model).toBe("openai/gpt-4o");
     expect(result.fallbackModels).toEqual(["anthropic/claude-3"]);
     expect(result.cooldownMinutes).toBe(5);
     expect(result.debug).toBe(true);
-    expect(result.locale).toBe("ru_RU.UTF-8");
     expect(result.maxNameLength).toBe(80);
-    expect(result.promptExtra).toBe("Prefer work-ticket prefixes");
     expect(result.ticketPattern).toBe("\\b([A-Z]+-\\d+)\\b");
-    expect(result.respectManualName).toBe(false);
+    expect(result.respectManualName).toBe(true);
   });
 
   it("clamps cooldownMinutes to valid range", () => {
@@ -78,11 +78,8 @@ describe("normalizeConfig", () => {
     expect(result.respectManualName).toBe(true);
   });
 
-  it("DEFAULT_CONFIG defaults respectManualName to false (pi-autoname owns naming)", () => {
-    // Product intent: once pi-autoname is installed, automatic naming owns
-    // the session name. `/name` is effectively redundant. The legacy
-    // `respectManualName: true` opt-in must remain an explicit escape hatch.
-    expect(DEFAULT_CONFIG.respectManualName).toBe(false);
+  it("DEFAULT_CONFIG protects manual names", () => {
+    expect(DEFAULT_CONFIG.respectManualName).toBe(true);
   });
 
   it("rejects non-string fallbackModels entries", () => {
@@ -99,12 +96,10 @@ describe("normalizeConfig", () => {
   });
 
   it("uses default for wrong types", () => {
-    const result = normalizeConfig({ enabled: "yes", debug: 1, locale: 123, maxNameLength: "80", promptExtra: 123, ticketPattern: 456, respectManualName: "true" });
+    const result = normalizeConfig({ enabled: "yes", debug: 1, maxNameLength: "80", ticketPattern: 456, respectManualName: "true" });
     expect(result.enabled).toBe(DEFAULT_CONFIG.enabled);
     expect(result.debug).toBe(DEFAULT_CONFIG.debug);
-    expect(result.locale).toBe(DEFAULT_CONFIG.locale);
     expect(result.maxNameLength).toBe(DEFAULT_CONFIG.maxNameLength);
-    expect(result.promptExtra).toBe(DEFAULT_CONFIG.promptExtra);
     expect(result.ticketPattern).toBe(DEFAULT_CONFIG.ticketPattern);
     expect(result.respectManualName).toBe(DEFAULT_CONFIG.respectManualName);
   });
@@ -491,6 +486,18 @@ describe("getFirstDialogue", () => {
   });
 });
 
+describe("getFirstUserMessage", () => {
+  it("returns the actual first user turn instead of a compaction summary", () => {
+    const branch = [
+      { type: "compaction", summary: "DVR-999 generated summary" },
+      { type: "message", message: { role: "user", content: "DVR-123 настоящий первый запрос" } },
+      { type: "message", message: { role: "assistant", content: "ответ" } },
+    ];
+
+    expect(getFirstUserMessage(branch)).toEqual({ role: "user", text: "DVR-123 настоящий первый запрос" });
+  });
+});
+
 // ---------------------------------------------------------------------------
 // getRecentDialogue
 // ---------------------------------------------------------------------------
@@ -529,6 +536,45 @@ describe("getRecentDialogue", () => {
 
   it("returns empty for empty branch", () => {
     expect(getRecentDialogue([])).toEqual([]);
+  });
+});
+
+describe("getNamingContext", () => {
+  it("keeps the summary with Pi's retained and post-compaction messages", () => {
+    // This is the canonical shape returned by SessionManager.buildContextEntries().
+    const entries = [
+      { type: "compaction", summary: "Работаем над сохранением ручного имени расширения" },
+      { type: "message", message: { role: "user", content: "сохрани retained tail перед compact" } },
+      { type: "message", message: { role: "assistant", content: "retained tail сохранён" } },
+      { type: "message", message: { role: "user", content: "теперь добавь тест на восстановление" } },
+      { type: "message", message: { role: "assistant", content: "добавляю тест" } },
+    ];
+
+    expect(getNamingContext(entries)).toEqual([
+      { role: "summary", text: "Работаем над сохранением ручного имени расширения" },
+      { role: "user", text: "сохрани retained tail перед compact" },
+      { role: "assistant", text: "retained tail сохранён" },
+      { role: "user", text: "теперь добавь тест на восстановление" },
+      { role: "assistant", text: "добавляю тест" },
+    ]);
+  });
+});
+
+describe("detectDominantUserLanguage", () => {
+  it("keeps non-CJK user language generic instead of guessing Russian or English", () => {
+    expect(detectDominantUserLanguage([
+      { role: "user", text: "Проверь, почему имя сессии перезаписывается" },
+      { role: "assistant", text: "Please inspect the session naming flow" },
+    ])).toBe("UserLanguage");
+    expect(getNamingLanguageInstruction([
+      { role: "user", text: "Corrige le nom de la session" },
+    ], "ru-RU")).toContain("same dominant natural language used by the user");
+  });
+
+  it("does not let code identifiers dilute a CJK request", () => {
+    expect(detectDominantUserLanguage([
+      { role: "user", text: "请修复 sessionNameChangedHandler 的问题" },
+    ])).toBe("Chinese");
   });
 });
 
@@ -573,7 +619,7 @@ describe("parseRenameMarker", () => {
     });
   });
 
-  it("parses a user_rename marker (recorded by agent_end)", () => {
+  it("parses a user_rename marker (recorded by session_info_changed)", () => {
     const marker = parseRenameMarker({
       event: "user_rename",
       name: "My Custom Title",
