@@ -326,13 +326,24 @@ describe("ticket prefix helpers", () => {
     expect(withTicketPrefix("naming config", "ABC-123", 7)).toBe("ABC-123");
   });
 
-  it("does not persist a partial ticket prefix when the limit is shorter", () => {
-    expect(withTicketPrefix("naming config", "DVR-12665", 8)).toBe("naming c");
-    expect(withTicketPrefix("naming config", "DVR-12665", 8)).not.toContain("DVR-1266");
+  it("skips naming when the trusted prefix cannot fit", () => {
+    expect(withTicketPrefix("naming config", "DVR-12665", 8)).toBeUndefined();
+    expect(withTicketPrefix("DVR-12665", "DVR-12665", 8)).toBeUndefined();
   });
 
-  it("returns an empty result when an oversized prefix has no descriptive suffix", () => {
-    expect(withTicketPrefix("DVR-12665", "DVR-12665", 8)).toBe("");
+  it("redacts secrets before extracting a ticket prefix", () => {
+    expect(
+      extractTicketPrefix(
+        [{ role: "user", text: "Проверь ABC-123 apiKey=sk-123456789012345678901234" }],
+        "\\b([A-Z]+-\\d+)\\b|\\b(sk-[A-Za-z0-9_-]+)\\b",
+      ),
+    ).toBe("ABC-123");
+    expect(
+      extractTicketPrefix(
+        [{ role: "user", text: "Проверь sk-123456789012345678901234" }],
+        "\\b(sk-[A-Za-z0-9_-]+)\\b",
+      ),
+    ).toBeUndefined();
   });
 
   it("removes an untrusted generated ticket prefix", () => {
@@ -615,6 +626,22 @@ describe("parseRenameMarker", () => {
       name: "DVR-12665 Проверка ревью",
       source: "ai",
       ticketPrefix: "DVR-12665",
+      timestamp: 1700000000002,
+    });
+  });
+
+  it("drops a secret ticketPrefix from an old marker", () => {
+    const marker = parseRenameMarker({
+      name: "sk-123456789012345678901234 Проверка",
+      source: "ai",
+      ticketPrefix: "sk-123456789012345678901234",
+      timestamp: 1700000000002,
+    });
+
+    expect(marker).toEqual({
+      kind: "ai",
+      name: "sk-123456789012345678901234 Проверка",
+      source: "ai",
       timestamp: 1700000000002,
     });
   });

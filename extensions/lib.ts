@@ -108,7 +108,10 @@ export function extractTicketPrefix(parts: Array<{ role: string; text: string }>
   const pattern = compileTicketPattern(ticketPattern);
   if (!pattern) return undefined;
   const globalPattern = new RegExp(pattern.source, `${pattern.flags}g`);
-  const userText = parts.filter((part) => part.role === "user").map((part) => part.text).join("\n");
+  const userText = parts
+    .filter((part) => part.role === "user")
+    .map((part) => redactSensitiveText(part.text).text)
+    .join("\n");
   const candidates = new Set<string>();
   for (const match of userText.matchAll(globalPattern)) {
     const candidate = (match[1] ?? match[0])?.trim();
@@ -121,11 +124,11 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function withTicketPrefix(name: string, ticketPrefix: string | undefined, maxNameLength = Number.POSITIVE_INFINITY): string {
+export function withTicketPrefix(name: string, ticketPrefix: string | undefined, maxNameLength = Number.POSITIVE_INFINITY): string | undefined {
   if (!ticketPrefix) return name;
   const duplicatePrefix = new RegExp(`^${escapeRegExp(ticketPrefix)}[\\s:–—-]*`, "iu");
   const suffix = name.replace(duplicatePrefix, "").trim();
-  if (ticketPrefix.length > maxNameLength) return suffix.slice(0, maxNameLength).trim();
+  if (ticketPrefix.length > maxNameLength) return undefined;
   const availableSuffixLength = maxNameLength - ticketPrefix.length - 1;
   if (availableSuffixLength <= 0) return ticketPrefix;
   return `${ticketPrefix} ${suffix.slice(0, availableSuffixLength)}`.trim();
@@ -245,7 +248,8 @@ export type RenameMarker =
 export function parseRenameMarker(data: unknown): RenameMarker | undefined {
   if (!data || typeof data !== "object") return undefined;
   const obj = data as Record<string, unknown>;
-  const ticketPrefix = typeof obj.ticketPrefix === "string" && obj.ticketPrefix.trim() ? obj.ticketPrefix.trim() : undefined;
+  const rawTicketPrefix = typeof obj.ticketPrefix === "string" ? obj.ticketPrefix.trim() : "";
+  const ticketPrefix = rawTicketPrefix && !redactSensitiveText(rawTicketPrefix).redacted ? rawTicketPrefix : undefined;
   if (obj.event === "user_rename" && typeof obj.name === "string") {
     return { kind: "user_rename", name: obj.name, timestamp: typeof obj.timestamp === "number" ? obj.timestamp : 0, ...(ticketPrefix ? { ticketPrefix } : {}) };
   }

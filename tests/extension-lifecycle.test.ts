@@ -616,6 +616,54 @@ describe("extensions/index.ts lifecycle", () => {
     expect((branch.at(-1) as { data?: unknown } | undefined)?.data).not.toHaveProperty("ticketPrefix");
   });
 
+  it("подхватывает тикет из первого user-сообщения при периодическом переименовании", async () => {
+    vi.useFakeTimers();
+    const now = new Date("2026-06-18T12:45:00.000Z");
+    vi.setSystemTime(now);
+    await fs.mkdir(path.join(tempHome, ".pi", "agent"), { recursive: true });
+    await fs.writeFile(
+      path.join(tempHome, ".pi", "agent", "pi-autoname.json"),
+      JSON.stringify({
+        enabled: true,
+        cooldownMinutes: 10,
+        maxNameLength: 80,
+        ticketPattern: "\\b([A-Z]+-\\d+)\\b",
+      }),
+      "utf-8",
+    );
+    completeMock.mockResolvedValue({
+      content: [{ type: "text", text: "Обновление черновых комментариев" }],
+      stopReason: "stop",
+      errorMessage: undefined,
+    });
+
+    const branch = [
+      message("user", "DVR-12665 проверь ревью"),
+      message("assistant", "Начинаю проверку"),
+      message("user", "Уточни второй комментарий"),
+      message("assistant", "Уточняю"),
+      {
+        type: "custom",
+        customType: "pi-autoname-state",
+        data: { name: "Старое автоматическое имя", source: "ai", timestamp: now.getTime() - 11 * 60 * 1000 },
+      },
+    ];
+    const pi = createFakePi(branch, "Старое автоматическое имя");
+    const ctx = createContext(branch);
+    const { default: extension } = await loadExtensionModule(tempHome);
+
+    extension(pi as any);
+    await pi._getHandler("session_start")({}, ctx);
+    await pi._getHandler("agent_settled")({}, ctx);
+
+    expect(pi._getSessionName()).toBe("DVR-12665 Обновление черновых комментариев");
+    expect(branch.at(-1)).toMatchObject({
+      type: "custom",
+      customType: "pi-autoname-state",
+      data: { name: "DVR-12665 Обновление черновых комментариев", source: "ai", ticketPrefix: "DVR-12665" },
+    });
+  });
+
   it("сохраняет единственный тикет из первого сообщения между переименованиями", async () => {
     vi.useFakeTimers();
     const now = new Date("2026-06-18T13:00:00.000Z");

@@ -263,7 +263,7 @@ function extractDialogue(ctx: ExtensionContext, mode: NamingMode): DialoguePart[
 function applyTicketPolicy(name: string, ticketPrefix: string | undefined, config: AutonameConfig): string | undefined {
   const baseName = ticketPrefix ? name.trim() : withoutTicketPrefix(name.trim(), config.ticketPattern);
   if (!baseName) return undefined;
-  const finalName = withTicketPrefix(baseName, ticketPrefix, config.maxNameLength ?? DEFAULT_CONFIG.maxNameLength).trim();
+  const finalName = withTicketPrefix(baseName, ticketPrefix, config.maxNameLength ?? DEFAULT_CONFIG.maxNameLength)?.trim();
   return finalName && isHighQualityName(finalName, config.maxNameLength ?? DEFAULT_CONFIG.maxNameLength) ? finalName : undefined;
 }
 
@@ -289,7 +289,7 @@ async function generateName(
   const config = loadConfig();
   const parts = extractDialogue(ctx, mode);
   if (!parts.length) return undefined;
-  const firstUser = mode === "initial" ? getFirstUserMessage(ctx.sessionManager.getBranch()) : undefined;
+  const firstUser = getFirstUserMessage(ctx.sessionManager.getBranch());
   const ticketPrefix = rememberedTicketPrefix ?? (firstUser ? extractTicketPrefix([firstUser], config.ticketPattern) : undefined);
   const prompt = buildNamingPrompt(parts, currentName, getI18nLocale(pi), config, ticketPrefix);
   const startedAt = Date.now();
