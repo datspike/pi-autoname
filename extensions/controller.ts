@@ -108,9 +108,10 @@ export function createNamingController(runtime: NamingControllerRuntime): Naming
       const existing = normalizeName(existingName);
       lastGeneratedName = undefined;
       manualName = undefined;
-      ticketPrefix = marker?.ticketPrefix;
+      ticketPrefix = undefined;
       lastRenameTime = 0;
       if (existing && marker?.name === existing) {
+        ticketPrefix = marker.ticketPrefix;
         lastRenameTime = marker.timestamp || runtime.now();
         lastGeneratedName = existing;
         if (marker.kind === "user_rename") {

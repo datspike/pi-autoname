@@ -113,4 +113,28 @@ describe("createNamingController", () => {
     expect(rt.name).toBe("ABC-123 Новое имя");
     expect(rt.generateName).toHaveBeenCalledWith(expect.objectContaining({ ticketPrefix: "ABC-123" }));
   });
+
+  it("does not restore a ticket from a marker that belongs to another name", async () => {
+    const rt = runtime({
+      name: "Текущее имя",
+      respectManualName: false,
+      generateName: vi.fn(async ({ ticketPrefix }) => ({
+        name: ticketPrefix ? `${ticketPrefix} Новое имя` : "Новое имя",
+        source: "ai",
+      })),
+    });
+    const controller = createNamingController(rt);
+
+    controller.restore({
+      kind: "ai",
+      name: "ABC-123 Старое имя",
+      source: "ai",
+      timestamp: 5,
+      ticketPrefix: "ABC-123",
+    }, rt.name);
+    await controller.handleSettled();
+
+    expect(rt.generateName).toHaveBeenCalledWith(expect.objectContaining({ ticketPrefix: undefined }));
+    expect(rt.name).toBe("Новое имя");
+  });
 });
