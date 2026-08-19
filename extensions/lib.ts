@@ -250,15 +250,16 @@ export function parseRenameMarker(data: unknown): RenameMarker | undefined {
   const obj = data as Record<string, unknown>;
   const rawTicketPrefix = typeof obj.ticketPrefix === "string" ? obj.ticketPrefix.trim() : "";
   const ticketPrefix = rawTicketPrefix && !redactSensitiveText(rawTicketPrefix).redacted ? rawTicketPrefix : undefined;
+  const timestamp = typeof obj.timestamp === "number" && Number.isFinite(obj.timestamp) && obj.timestamp >= 0 ? obj.timestamp : 0;
   if (obj.event === "user_rename" && typeof obj.name === "string") {
-    return { kind: "user_rename", name: obj.name, timestamp: typeof obj.timestamp === "number" ? obj.timestamp : 0, ...(ticketPrefix ? { ticketPrefix } : {}) };
+    return { kind: "user_rename", name: obj.name, timestamp, ...(ticketPrefix ? { ticketPrefix } : {}) };
   }
   if ((obj.source === "ai" || obj.source === "fallback") && typeof obj.name === "string") {
     const source = obj.source === "ai" ? "ai" : "fallback";
     if (source === "ai") {
-      return { kind: "ai", name: obj.name, source, timestamp: typeof obj.timestamp === "number" ? obj.timestamp : 0, ...(ticketPrefix ? { ticketPrefix } : {}) };
+      return { kind: "ai", name: obj.name, source, timestamp, ...(ticketPrefix ? { ticketPrefix } : {}) };
     }
-    return { kind: "fallback", name: obj.name, source, timestamp: typeof obj.timestamp === "number" ? obj.timestamp : 0, ...(ticketPrefix ? { ticketPrefix } : {}) };
+    return { kind: "fallback", name: obj.name, source, timestamp, ...(ticketPrefix ? { ticketPrefix } : {}) };
   }
   return undefined;
 }

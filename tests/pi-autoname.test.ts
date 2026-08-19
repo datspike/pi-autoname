@@ -686,16 +686,20 @@ describe("parseRenameMarker", () => {
     expect(parseRenameMarker({ event: "user_rename", name: 123 })).toBeUndefined();
   });
 
-  it("defaults missing timestamp to 0", () => {
-    const marker = parseRenameMarker({
-      name: "X",
-      source: "ai",
-    });
-    expect(marker).toEqual({
-      kind: "ai",
-      name: "X",
-      source: "ai",
-      timestamp: 0,
-    });
+  it("preserves a finite non-negative timestamp", () => {
+    expect(parseRenameMarker({ name: "X", source: "ai", timestamp: 1700000000000 })?.timestamp).toBe(1700000000000);
+  });
+
+  it("defaults a missing timestamp to 0", () => {
+    expect(parseRenameMarker({ name: "X", source: "ai" })?.timestamp).toBe(0);
+  });
+
+  it.each([
+    ["non-numeric", "1700000000000"],
+    ["NaN", NaN],
+    ["Infinity", Infinity],
+    ["negative", -1],
+  ])("defaults %s timestamps to 0", (_label, timestamp) => {
+    expect(parseRenameMarker({ name: "X", source: "ai", timestamp })?.timestamp).toBe(0);
   });
 });
