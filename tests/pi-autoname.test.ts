@@ -24,7 +24,7 @@ import {
   MIN_CONFIG_NAME_LENGTH,
   MAX_CONFIG_NAME_LENGTH,
 } from "../extensions/lib.js";
-import { extractCleanName } from "../extensions/index.js";
+import { extractCleanName, fallbackName } from "../extensions/index.js";
 
 // ---------------------------------------------------------------------------
 // normalizeConfig
@@ -268,6 +268,47 @@ describe("extractCleanName", () => {
   it("normalizes all whitespace to a single line", () => {
     const name = "API\nrefactor\tplan\r\n";
     expect(extractCleanName({ content: [{ type: "text", text: name }] })).toBe("API refactor plan");
+  });
+});
+
+describe("fallbackName", () => {
+  it("vetoes fallback selection when any user fragment is redacted", () => {
+    expect(fallbackName([
+      { role: "user", text: "Safe database migration" },
+      { role: "user", text: "API_KEY=secret-value" },
+    ], DEFAULT_CONFIG)).toBeUndefined();
+  });
+
+  it("returns no fallback for a redacted-only user context", () => {
+    expect(fallbackName([{ role: "user", text: "sk-1234567890abcdef1234567890" }], DEFAULT_CONFIG)).toBeUndefined();
+  });
+
+  it("uses only user fragments, excluding assistant and summary text", () => {
+    expect(fallbackName([
+      { role: "summary", text: "Summary candidate" },
+      { role: "assistant", text: "Assistant candidate" },
+      { role: "user", text: "User candidate" },
+    ], DEFAULT_CONFIG)?.name).toBe("User candidate");
+  });
+
+  it("returns no fallback for empty or invalid user text", () => {
+    expect(fallbackName([
+      { role: "assistant", text: "Assistant candidate" },
+      { role: "user", text: "   " },
+      { role: "user", text: "ab" },
+    ], DEFAULT_CONFIG)).toBeUndefined();
+  });
+
+  it("validates the raw fallback before applying a ticket prefix", () => {
+    expect(fallbackName([{ role: "user", text: "ab" }], DEFAULT_CONFIG, "ABC-123")).toBeUndefined();
+  });
+
+  it("preserves latest-valid deterministic selection for safe-only context", () => {
+    expect(fallbackName([
+      { role: "user", text: "Older task" },
+      { role: "assistant", text: "Ignore this" },
+      { role: "user", text: "Latest task" },
+    ], DEFAULT_CONFIG)?.name).toBe("Latest task");
   });
 });
 
