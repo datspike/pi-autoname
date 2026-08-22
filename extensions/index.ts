@@ -267,12 +267,12 @@ function applyTicketPolicy(name: string, ticketPrefix: string | undefined, confi
   return finalName && isHighQualityName(finalName, config.maxNameLength ?? DEFAULT_CONFIG.maxNameLength) ? finalName : undefined;
 }
 
-function fallbackName(parts: DialoguePart[], config: AutonameConfig, ticketPrefix?: string): NamingResult | undefined {
-  for (let index = parts.length - 1; index >= 0; index -= 1) {
-    if (parts[index].role !== "user") continue;
-    const redacted = redactSensitiveText(parts[index].text);
-    if (redacted.redacted) continue;
-    const name = applyTicketPolicy(smartFallbackName(redacted.text), ticketPrefix, config);
+export function fallbackName(parts: DialoguePart[], config: AutonameConfig, ticketPrefix?: string): NamingResult | undefined {
+  const userParts = parts.filter((part) => part.role === "user");
+  if (userParts.some((part) => redactSensitiveText(part.text).redacted)) return undefined;
+
+  for (let index = userParts.length - 1; index >= 0; index -= 1) {
+    const name = applyTicketPolicy(smartFallbackName(userParts[index].text), ticketPrefix, config);
     if (name) return { name, source: "fallback", ...(ticketPrefix ? { ticketPrefix } : {}) };
   }
   return undefined;
