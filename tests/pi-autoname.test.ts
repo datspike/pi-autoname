@@ -299,6 +299,10 @@ describe("fallbackName", () => {
     ], DEFAULT_CONFIG)).toBeUndefined();
   });
 
+  it("validates the raw fallback before applying a ticket prefix", () => {
+    expect(fallbackName([{ role: "user", text: "ab" }], DEFAULT_CONFIG, "ABC-123")).toBeUndefined();
+  });
+
   it("preserves latest-valid deterministic selection for safe-only context", () => {
     expect(fallbackName([
       { role: "user", text: "Older task" },

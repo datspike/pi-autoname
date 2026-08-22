@@ -272,7 +272,9 @@ export function fallbackName(parts: DialoguePart[], config: AutonameConfig, tick
   if (userParts.some((part) => redactSensitiveText(part.text).redacted)) return undefined;
 
   for (let index = userParts.length - 1; index >= 0; index -= 1) {
-    const name = applyTicketPolicy(smartFallbackName(userParts[index].text), ticketPrefix, config);
+    const rawName = smartFallbackName(userParts[index].text);
+    if (!isHighQualityName(rawName, config.maxNameLength ?? DEFAULT_CONFIG.maxNameLength)) continue;
+    const name = applyTicketPolicy(rawName, ticketPrefix, config);
     if (name) return { name, source: "fallback", ...(ticketPrefix ? { ticketPrefix } : {}) };
   }
   return undefined;
